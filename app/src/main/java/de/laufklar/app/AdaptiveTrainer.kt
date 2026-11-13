@@ -2,7 +2,7 @@ package de.laufklar.app
 
 import kotlin.math.*
 
-enum class Readiness(val label:String) { READY("Erholt"), TIRED("Müde / Hangover"), UNWELL("Krank / Beschwerden") }
+enum class Readiness(val label:String) { READY("Erholt"), TIRED("Müde / Hangover"), UNWELL("Angeschlagen") }
 enum class TrainingFocus(val label:String) { LEARN("Dich kennenlernen"), BUILD("Ziel aufbauen"), MAINTAIN("Fitness erhalten"), RETURN("Wieder einsteigen"), RECOVER("Erholung priorisieren") }
 data class DailyPlan(
     val focus:TrainingFocus, val reason:String, val suggested:Workout, val restRecommended:Boolean,
@@ -28,7 +28,7 @@ object AdaptiveTrainer {
     }
     fun qualitySucceeded(run:Run):Boolean {
         val phases=run.phases.ifEmpty{Training.fallback(run.workout)}
-        if(run.workout!=Workout.INTERVALS||run.recovered||run.rpe==null||run.rpe>7||run.activeSeconds<phases.sumOf{it.duration}*.95) return false
+        if(run.workout!=Workout.INTERVALS||run.readiness!=Readiness.READY.name||run.recovered||run.rpe==null||run.rpe>7||run.activeSeconds<phases.sumOf{it.duration}*.95) return false
         val work=phases.filter{it.intense}.sumOf{it.duration}.toDouble()
         var valid=0.0;var controlled=0.0
         run.pulses.zipWithNext().forEach{(a,b)->
@@ -43,6 +43,8 @@ object AdaptiveTrainer {
         val all=history.filter{it.ended!=null&&it.started<=now&&it.activeSeconds>=300&&!it.recovered}.sortedByDescending{it.started}
         val relevant=all.filter{it.mode==mode}
         val recent=relevant.filter{now-it.started<=35*DAY}
+        // Every run counts as load; only rested runs teach rested training targets.
+        val rested=recent.filter{it.readiness==Readiness.READY.name}
         val recentAll=all.filter{now-it.started<=28*DAY}
         val gap=all.firstOrNull()?.let{(now-it.ended!!)/DAY}?:0
         val latest=all.firstOrNull()
@@ -59,14 +61,14 @@ object AdaptiveTrainer {
         val loadHigh=priorWeeks.size>=4&&week.sumOf{it.activeSeconds}>weeklyBase*1.2
         val recentHard=all.any{now-it.started<7*DAY&&it.workout==Workout.INTERVALS}
         val rest=readiness==Readiness.UNWELL||latest?.let{now-it.ended!!<24*3_600_000L}==true||week.size>=profile.runsPerWeek||loadHigh
-        val observedEasyPaces=recent.filter{it.workout!=Workout.INTERVALS&&it.rpe!=null&&it.rpe<=4&&it.pace!=null&&it.pace!! in 180.0..1200.0}.take(3).map{it.pace!!}
+        val observedEasyPaces=rested.filter{it.workout!=Workout.INTERVALS&&it.rpe!=null&&it.rpe<=4&&it.pace!=null&&it.pace!! in 180.0..1200.0}.take(3).map{it.pace!!}
         val startingPace=profile.usualPace?:observedEasyPaces.takeIf{it.size>=3}?.average()?.roundToInt()
         val qualityAllowed=startingPace!=null&&profile.intensityReady&&focus in setOf(TrainingFocus.BUILD,TrainingFocus.MAINTAIN)&&readiness==Readiness.READY&&!recentHard&&!rest&&latest?.let{now-it.ended!!>=48*3_600_000L}!=false
-        val recentQuality=recent.firstOrNull{it.workout==Workout.INTERVALS}
+        val recentQuality=rested.firstOrNull{it.workout==Workout.INTERVALS}
         val successful=recentQuality?.let(::qualitySucceeded)==true
-        val wellTolerated=recent.take(3).count{it.rpe!=null&&it.rpe<=4}>=2
-        val previousLong=recent.filter{it.workout!=Workout.INTERVALS}.maxOfOrNull{it.activeSeconds/60}?.roundToInt()?:30
-        val comfortablePace=recent.filter{it.workout!=Workout.INTERVALS&&it.pace!=null&&it.pace!! in 180.0..1200.0}.take(3).map{it.pace!!}.takeIf{it.isNotEmpty()}?.average()?:profile.usualPace?.times(1.15)
+        val wellTolerated=rested.take(3).count{it.rpe!=null&&it.rpe<=4}>=2
+        val previousLong=rested.filter{it.workout!=Workout.INTERVALS}.maxOfOrNull{it.activeSeconds/60}?.roundToInt()?:30
+        val comfortablePace=rested.filter{it.workout!=Workout.INTERVALS&&it.pace!=null&&it.pace!! in 180.0..1200.0}.take(3).map{it.pace!!}.takeIf{it.isNotEmpty()}?.average()?:profile.usualPace?.times(1.15)
         val goalLong=comfortablePace?.let{(profile.goalKm*it/60*1.05).roundToInt().coerceIn(25,150)}?:150
         var long=(previousLong+if(wellTolerated&&!loadHigh)5 else 0).coerceAtLeast(30).coerceAtMost(goalLong)
         var easy=(previousLong*.75).roundToInt().coerceIn(25,45)
@@ -88,7 +90,7 @@ object AdaptiveTrainer {
         // The everyday entry point stays a familiar, open run. Structured sessions remain optional.
         val suggested=Workout.EASY
         val reason=when{
-            readiness==Readiness.UNWELL->"Heute kein Lauftraining. Krankheit oder Beschwerden haben Vorrang vor dem Ziel."
+            readiness==Readiness.UNWELL->"Heute ist Erholung empfohlen. Wenn du trotzdem aufzeichnest, bleibt dieser Lauf von Vergleichen mit erholten Läufen getrennt."
             readiness==Readiness.TIRED->"Du meldest Müdigkeit oder Hangover. Heute keine Intervalle; Erholung oder höchstens sehr locker."
             returning->if(gap>=14)"Seit dem letzten Lauf sind $gap Tage vergangen. Kürzer und locker wieder einsteigen; dein Ziel bleibt bestehen."else "Nach deiner längeren Pause bleiben die ersten drei Einheiten kürzer und locker. Dein Ziel bleibt bestehen."
             poor>=2->"Zwei deiner letzten drei Läufe waren sehr anstrengend. Wir reduzieren zunächst die Belastung."

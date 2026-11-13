@@ -4,6 +4,11 @@ import kotlin.math.roundToInt
 
 /** GPS speed in m/s, sampled before filtering stationary route jitter. Missing fixes are not stops. */
 class AutoPauseDetector {
+    companion object {
+        const val STOP_MS = 2_000L
+        const val RESUME_MS = 1_000L
+        const val MAX_FIX_AGE_MS = 1_500L
+    }
     enum class Action { PAUSE, RESUME }
     private var candidateSince: Long? = null
     private var lastSample: Long? = null
@@ -11,7 +16,10 @@ class AutoPauseDetector {
 
     fun reset() { candidateSince = null; lastSample = null; candidate = null }
 
-    fun sample(speed: Double?, now: Long, automaticallyPaused: Boolean): Action? {
+    fun sample(speed: Double?, now: Long, automaticallyPaused: Boolean, receivedAt: Long = now): Action? {
+        // Late and out-of-order fixes must never rewind a newer movement decision.
+        if (lastSample?.let { now <= it } == true) return null
+        if (receivedAt - now !in 0..MAX_FIX_AGE_MS) { reset(); return null }
         if (speed == null || !speed.isFinite() || speed !in 0.0..9.0) { reset(); return null }
         if (lastSample?.let { now - it !in 1..3_000 } == true) reset()
         lastSample = now
@@ -22,7 +30,7 @@ class AutoPauseDetector {
         }
         if (next != candidate) { candidate = next; candidateSince = now.takeIf { next != null } }
         val since = candidateSince ?: return null
-        val required = if (next == Action.PAUSE) 8_000 else 3_000
+        val required = if (next == Action.PAUSE) STOP_MS else RESUME_MS
         return next?.takeIf { now - since >= required }?.also { reset() }
     }
 }

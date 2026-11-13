@@ -1,4 +1,18 @@
-# Aktueller Prüfstand: 0.1.5
+# Aktueller Prüfstand: 0.1.6
+
+13. November 2026 · Paket `de.laufklar.app` · Versionscode 7.
+
+- 95 JVM-Tests bestanden. Neue Regressionen prüfen die 2-Sekunden-Pause und 1-Sekunden-Fortsetzung, ungültige/veraltete/doppelte GPS-Messungen, das Ersetzen und Verwerfen überholter Sprachmeldungen sowie Tagesform bei Routenvergleich und Lernen des Ausgangstempos.
+- Alle 19 Android-Instrumentierungstests im isolierten API-36-Emulator bestanden (128 Sekunden). Neu geprüft: unterer Gesundheitshinweis mit weiterhin aktivem Startknopf, tatsächlicher Laufstart mit `UNWELL`, Auto-Pause und Fortsetzung im Aufzeichnungsdienst, verspätete/gebündelte GPS-Fixes sowie Bestand einer manuellen Pause. Tests für Speicherung, Health Connect, Karte und vollständigen Cooldown blieben grün.
+- `testDebugUnitTest`, `lintDebug`, `assembleDebug`, `assembleDebugAndroidTest`, `assembleRelease`: erfolgreich. Android-Lint: 0 Fehler, 10 bestehende Warnungen.
+- Signierte, optimierte Release-APK mit `apksigner verify` geprüft; unverändertes Zertifikat gegenüber v0.1.5. SHA-256 der APK: `d8d69de28df481724c0b01ca3c2d7fb0cef66b0728ffd25f20812c88361cb08e`.
+- Kein physisches Telefon angeschlossen; v0.1.6 wurde deshalb noch nicht auf dem Nutzergerät installiert. Testläufe entstanden ausschließlich im Emulator.
+
+Im echten Lauf noch zu prüfen: GPS-Reaktion an Ampeln sowie Ansagetiming mit Musik/AirPods. Die angegebenen 2/1 Sekunden gelten ab verlässlichen, frischen Geschwindigkeitsmessungen; GPS-Empfang und Betriebssystem können die tatsächliche Reaktion beeinflussen.
+
+---
+
+# Früherer Prüfstand: 0.1.5
 
 13. November 2026 · Paket `de.laufklar.app` · Versionscode 6.
 

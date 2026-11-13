@@ -44,8 +44,9 @@ class AudioCoach(context:android.content.Context) {
     private val focus=AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK).setAudioAttributes(attributes).setOnAudioFocusChangeListener{}.build()
     private var ready=false
     private val handler=Handler(Looper.getMainLooper())
-    private val pending=ArrayDeque<String>()
+    private val pending=SpeechQueue()
     private var activeId:String?=null
+    private var activeCue:SpeechCue?=null
     private var sequence=0L
     private var closed=false
     private var hasFocus=false
@@ -71,21 +72,37 @@ class AudioCoach(context:android.content.Context) {
             override fun onStop(id:String?,interrupted:Boolean){completed(id)}
         })
     }
-    fun speak(text:String){if(closed)return;pending.addLast(text);playNext()}
+    fun speak(text:String){if(closed)return;pending.add(SpeechCue(text));playNext()}
+    fun movementStatus(text:String,paused:Boolean){
+        if(closed)return
+        removeMovementStatus()
+        val runId=Live.run.value?.id?:return
+        pending.add(SpeechCue(text,key="movement",validUntil=SystemClock.elapsedRealtime()+5_000,relevant={
+            Live.run.value?.let{it.id==runId&&it.ended==null}==true&&!Live.reviewing.value&&
+                if(paused)Live.paused.value&&Live.autoPaused.value else !Live.paused.value
+        }),next=true)
+        playNext()
+    }
+    private fun removeMovementStatus(){
+        pending.remove("movement")
+        // Only obsolete status speech is cancelled; ordinary coach cues stay queued.
+        if(activeCue?.key=="movement"){activeId=null;activeCue=null;tts?.stop()}
+    }
+    fun clearMovementStatus(){removeMovementStatus();playNext()}
     private fun playNext(){
         if(!ready||closed||activeId!=null)return
-        if(pending.isEmpty()){releaseFocus();return}
+        val cue=pending.poll(SystemClock.elapsedRealtime())?:run{releaseFocus();return}
         if(!hasFocus){
             hasFocus=manager.requestAudioFocus(focus)==AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-            if(!hasFocus){handler.removeCallbacks(retry);handler.postDelayed(retry,1000);return}
+            if(!hasFocus){pending.add(cue,next=true);handler.removeCallbacks(retry);handler.postDelayed(retry,1000);return}
         }
-        val text=pending.removeFirst().replace(Regex("(\\d{1,2}):(\\d{2})")){"${it.groupValues[1]} Minuten ${it.groupValues[2]} Sekunden pro Kilometer"}
-        val id="coach-${++sequence}";activeId=id
+        val text=cue.text.replace(Regex("(\\d{1,2}):(\\d{2})")){"${it.groupValues[1]} Minuten ${it.groupValues[2]} Sekunden pro Kilometer"}
+        val id="coach-${++sequence}";activeId=id;activeCue=cue
         if(tts?.speak(text,TextToSpeech.QUEUE_ADD,null,id)!=TextToSpeech.SUCCESS)completed(id)
     }
-    private fun completed(id:String?){handler.post{if(id!=null&&id==activeId){activeId=null;playNext()}}}
+    private fun completed(id:String?){handler.post{if(id!=null&&id==activeId){activeId=null;activeCue=null;playNext()}}}
     private fun releaseFocus(){if(hasFocus){manager.abandonAudioFocusRequest(focus);hasFocus=false}}
-    fun stop(){pending.clear();activeId=null;handler.removeCallbacks(retry);tts?.stop();releaseFocus()}
+    fun stop(){pending.clear();activeId=null;activeCue=null;handler.removeCallbacks(retry);tts?.stop();releaseFocus()}
     fun close(){closed=true;stop();tts?.shutdown()}
 }
 class RunService:Service(),LocationListener {
@@ -114,6 +131,7 @@ class RunService:Service(),LocationListener {
     private var segment=0
     private var previousPoint:TrackPoint?=null
     private var previousFix:TrackPoint?=null
+    private var lastLocationNanos=0L
     private val autoPause=AutoPauseDetector()
     private var lastCheckpoint=0L
     private var coach=Coach()
@@ -157,7 +175,6 @@ class RunService:Service(),LocationListener {
         var workout=Workout.valueOf(intent.getStringExtra("workout")?:Workout.EASY.name)
         val readiness=runCatching { Readiness.valueOf(intent.getStringExtra("readiness")?:"READY") }.getOrDefault(Readiness.READY)
         val plan=AdaptiveTrainer.plan(profile,repo().runs.value,mode,readiness)
-        if(readiness==Readiness.UNWELL){Live.message.value=plan.reason;stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();return}
         if(workout !in plan.available())workout=Workout.EASY
         startTick=SystemClock.elapsedRealtime();lastTick=startTick;startWall=System.currentTimeMillis();lastCheckpoint=0
         Live.sensor.rememberDevice(profile.sensorAddress,profile.sensorName)
@@ -165,7 +182,7 @@ class RunService:Service(),LocationListener {
         coach=Coach(repo().runs.value)
         Live.run.value=Run(started=startWall,mode=mode,workout=workout,zoneBounds=profile.bounds,estimatedZones=profile.estimated,phases=plan.phases(workout),targetPace=plan.targetPace,coachReason=plan.reason,readiness=readiness.name,
             openEnded=plan.openEnded(workout),plannedSeconds=if(workout==Workout.LONG)plan.longMinutes*60 else if(workout==Workout.EASY)null else plan.phases(workout).sumOf{it.duration})
-        Live.paused.value=false;Live.autoPaused.value=false;Live.cooldownSeconds.value=null;Live.saving.value=false;Live.reviewing.value=false;Live.beltSpeed.value=0.0;finishing=false;stopCooldown=false;autoPause.reset();previousFix=null;coach.reset(0.0,profile.cueMeters)
+        Live.paused.value=false;Live.autoPaused.value=false;Live.cooldownSeconds.value=null;Live.saving.value=false;Live.reviewing.value=false;Live.beltSpeed.value=0.0;finishing=false;stopCooldown=false;autoPause.reset();previousFix=null;lastLocationNanos=0;coach.reset(0.0,profile.cueMeters)
         wake=getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"laufklar:run").apply{acquire((6*60*60+120)*1000L)}
         if(mode==RunMode.OUTDOOR)startGps()
         startTimer()
@@ -207,18 +224,24 @@ class RunService:Service(),LocationListener {
             locations.requestLocationUpdates(LocationManager.GPS_PROVIDER,1000,0f,this,Looper.getMainLooper())
         }catch(e:Exception){Live.gps.value="GPS konnte nicht gestartet werden"}
     }
+    override fun onLocationChanged(locations:List<Location>){
+        // A buffered stop followed by movement must not replay a pause on delivery.
+        locations.maxByOrNull{it.elapsedRealtimeNanos}?.let(::onLocationChanged)
+    }
     override fun onLocationChanged(location:Location){
         if(finishing||Live.reviewing.value||Live.run.value?.ended!=null)return
         var r=Live.run.value?:return
         if(r.mode!=RunMode.OUTDOOR)return
+        if(location.elapsedRealtimeNanos<=lastLocationNanos)return
         val age=(SystemClock.elapsedRealtimeNanos()-location.elapsedRealtimeNanos)/1e9
         if(age !in 0.0..5.0||!location.hasAccuracy()){autoPause.reset();return}
+        lastLocationNanos=location.elapsedRealtimeNanos
         val fix=TrackPoint(wall(),r.activeSeconds,location.latitude,location.longitude,location.accuracy.toDouble(),segment)
         if(!Metrics.acceptedGps(previousFix,fix)){autoPause.reset();Live.gps.value="GPS ungenau · Punkt verworfen";return}
         previousFix=fix
         val measuredSpeed=location.speed.toDouble().takeIf{location.hasSpeed()&&location.hasSpeedAccuracy()&&location.speedAccuracyMetersPerSecond in 0f..1f&&location.accuracy<=15f&&it in 0.0..9.0}
         if(profile.autoPause&&(!Live.paused.value||Live.autoPaused.value)){
-            when(autoPause.sample(measuredSpeed,location.elapsedRealtimeNanos/1_000_000,Live.autoPaused.value)){
+            when(autoPause.sample(measuredSpeed,location.elapsedRealtimeNanos/1_000_000,Live.autoPaused.value,SystemClock.elapsedRealtime())){
                 AutoPauseDetector.Action.PAUSE->pause(automatic=true)
                 AutoPauseDetector.Action.RESUME->resume(automatic=true)
                 null->Unit
@@ -272,7 +295,7 @@ class RunService:Service(),LocationListener {
         tick();Live.paused.value=true;Live.autoPaused.value=automatic;autoPause.reset();pauseWall=wall();segment++;previousPoint=null
         if(!automatic)audio.stop()
         Live.message.value=if(automatic)"Automatisch pausiert. Bei Bewegung geht es weiter."else "Pausiert · Zeit und Strecke stehen"
-        if(automatic&&profile.audio)audio.speak("Lauf automatisch pausiert. Bei Bewegung geht es weiter.")
+        if(automatic&&profile.audio)audio.movementStatus("Automatisch pausiert.",paused=true)
         val snapshot=Live.run.value!!;val time=wall()
         checkpointJob?.cancel();checkpointJob=scope.launch{runCatching{repo().checkpoint(snapshot,time)}}
         getSystemService(NotificationManager::class.java).notify(71,notification())
@@ -284,7 +307,7 @@ class RunService:Service(),LocationListener {
         pauseWall?.takeIf{it<now}?.let{Live.run.value=r.copy(pauses=r.pauses+PauseSpan(it,now))}
         pauseWall=null;lastTick=SystemClock.elapsedRealtime();Live.paused.value=false;Live.autoPaused.value=false;autoPause.reset()
         Live.message.value=if(automatic)"Lauf automatisch fortgesetzt. Locker anlaufen."else "Weiter geht’s. Locker anlaufen."
-        if(automatic&&profile.audio)audio.speak(Live.message.value)
+        if(automatic&&profile.audio)audio.movementStatus("Lauf fortgesetzt.",paused=false)else audio.clearMovementStatus()
         if(r.mode==RunMode.OUTDOOR)startGps()
         getSystemService(NotificationManager::class.java).notify(71,notification())
     }

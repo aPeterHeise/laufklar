@@ -97,7 +97,6 @@ class MainActivity:ComponentActivity(){
     LaunchedEffect(active?.id,runs.size){if(active!=null)previousActive=active!!.id else if(previousActive!=null){detailId=previousActive;previousActive=null}}
     fun connectSensor(){request(arrayOf(Manifest.permission.BLUETOOTH_SCAN,Manifest.permission.BLUETOOTH_CONNECT)){sensorDialog=true;Live.sensorOwnership.reconnect();Live.sensor.scan()}}
     fun start(mode:RunMode,workout:Workout,readiness:Readiness){
-        if(readiness==Readiness.UNWELL){notice="Heute kein Lauftraining bei Krankheit oder Beschwerden. Dein Ziel bleibt bestehen.";return}
         if(storageError!=null){notice=storageError;return}
         if(workout==Workout.INTERVALS&&runs.any{it.workout==Workout.INTERVALS&&it.started>System.currentTimeMillis()-7*24*3600_000L}){notice="In den letzten 7 Tagen gab es eine Tempoeinheit. Wähle heute einen lockeren Lauf.";return}
         val perms=buildList{add(Manifest.permission.POST_NOTIFICATIONS);if(mode==RunMode.OUTDOOR){add(Manifest.permission.ACCESS_FINE_LOCATION);add(Manifest.permission.ACCESS_COARSE_LOCATION)};if(profile.sensorAddress!=null){add(Manifest.permission.BLUETOOTH_CONNECT);add(Manifest.permission.BLUETOOTH_SCAN)}}.toTypedArray()
@@ -160,7 +159,6 @@ fun weekRuns(runs:List<Run>,offset:Int=0):List<Run>{val end=LocalDate.now().minu
                 Text(plan.reason,color=Muted,fontSize=13.sp,lineHeight=20.sp)
                 Text("Wie fühlst du dich heute?",fontWeight=FontWeight.SemiBold)
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Readiness.entries.take(2).forEach{r->FilterChip(selected=readiness==r,onClick={readiness=r},label={Text(r.label,fontSize=12.sp)})}}
-                FilterChip(selected=readiness==Readiness.UNWELL,onClick={readiness=Readiness.UNWELL},label={Text(Readiness.UNWELL.label,fontSize=12.sp)})
             }
             Eyebrow(if(plan.restRecommended)"Heute ist Erholung empfohlen"else "Heute laufen")
             Text("Dein Coach begleitet die Runde mit einer kleinen Aufgabe und passenden Vergleichen. Du entscheidest, wann du fertig bist.",color=Muted,fontSize=13.sp,lineHeight=20.sp)
@@ -176,10 +174,12 @@ fun weekRuns(runs:List<Run>,offset:Int=0):List<Run>{val end=LocalDate.now().minu
         if(mode==RunMode.TREADMILL)CardBlock{Text("Dein Laufband gibt das Tempo vor",fontWeight=FontWeight.SemiBold);Text("Während des Laufs km/h eingeben. Ohne Eingabe laufen Zeit und Puls weiter; Pace und Distanz bleiben offen. Die Enddistanz kannst du nachtragen.",color=Muted,fontSize=13.sp)}
         if(profile.estimated)Text("Pulszonen sind noch geschätzt. Mit ${profile.age} Jahren sagt eine Formel nicht, wo deine persönliche Zone 2 liegt. Gemessene Grenzen kannst du im Profil hinterlegen.",color=Muted,fontSize=12.sp,lineHeight=19.sp)
         TextButton(onClick=onProfile){Text("Pulszonen & Audio einstellen")}
+        Toggle("Gesundheitlich angeschlagen",if(readiness==Readiness.UNWELL)"Bei Krankheit oder Beschwerden solltest du nicht laufen. Eine Aufzeichnung bleibt möglich; ohne Vergleich mit erholten Läufen."else null,
+            readiness==Readiness.UNWELL,{readiness=if(it)Readiness.UNWELL else Readiness.READY})
     }}
     Column(Modifier.fillMaxWidth().background(Ink).padding(horizontal=24.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
         Text("${workout.label} · ${plan.durationLabel(workout)}",fontSize=12.sp,color=Muted,modifier=Modifier.align(Alignment.CenterHorizontally))
-        FullButton("${mode.label} starten",Icons.Outlined.PlayArrow,enabled=readiness!=Readiness.UNWELL){onStart(mode,workout,readiness)}
+        FullButton("${mode.label} starten",Icons.Outlined.PlayArrow){onStart(mode,workout,readiness)}
     }
     }
 }
@@ -402,6 +402,7 @@ fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
         CardBlock{
             Eyebrow("Trainer-Notiz")
             Text(run.coachReason.ifBlank{"Freier Lauf"},color=Muted,fontSize=13.sp)
+            Text("Tagesform: ${Readiness.entries.firstOrNull{it.name==run.readiness}?.label?:"Unbekannt"}",color=Muted,fontSize=12.sp)
             if(run.coachMission.isNotBlank())Text(run.coachMission,color=Lime,fontSize=14.sp)
             if(run.coachOutcome.isNotBlank())Text(run.coachOutcome,color=Muted,fontSize=13.sp)
             Text(if(run.openEnded)"Offene Runde · du bestimmst das Ende"else "${(run.plannedSeconds?:run.phases.sumOf{it.duration})/60} Minuten geplant",color=Muted,fontSize=12.sp)

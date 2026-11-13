@@ -104,6 +104,22 @@ class PersonalCoachTest {
         val reversePoints=old.points.reversed().mapIndexed{i,p->p.copy(time=3_000_000+i*4000L,elapsed=i*4.0)}
         assertNull(RouteMatcher(listOf(old)).match(current.copy(points=reversePoints.take(301))))
     }
+    @Test fun differentReadinessKeepsRouteRecognitionWithoutPerformanceComparison() {
+        val old=square(1_000_000)
+        val current=square(3_000_000,400.0,143,3000)
+        for(readiness in listOf("TIRED","UNWELL","UNKNOWN")) {
+            assertNull(RouteMatcher(listOf(old)).match(current.copy(readiness=readiness))!!.comparison)
+            assertNull(RouteMatcher(listOf(old.copy(readiness=readiness))).match(current)!!.comparison)
+        }
+        assertNotNull(RouteMatcher(listOf(old)).match(current)!!.comparison)
+    }
+    @Test fun matchingReadinessIsPreferredOverANewerIncompatibleReference() {
+        val rested=square(1_000_000)
+        val tired=square(2_000_000).copy(readiness="TIRED")
+        val current=square(4_000_000,400.0,143,3000)
+        val match=RouteMatcher(listOf(tired,rested)).match(current)!!
+        assertEquals(rested.id,match.reference.id);assertNotNull(match.comparison)
+    }
     @Test fun pausesSuppressPerformanceClaimsButDoNotEraseRouteRecognition() {
         val old=square(1_000_000)
         val current=square(3_000_000,400.0,143,3000)

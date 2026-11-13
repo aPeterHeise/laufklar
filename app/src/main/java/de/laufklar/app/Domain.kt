@@ -86,6 +86,7 @@ object Training {
     fun available(profile: Profile) = Workout.entries.filter { it != Workout.INTERVALS || profile.intensityReady }
 }
 object Metrics {
+    fun sameReadiness(a: Run, b: Run) = a.readiness == b.readiness && Readiness.entries.any { it.name == a.readiness }
     fun parsePace(value: String): Int? {
         val match = Regex("^(\\d{1,2}):([0-5]\\d)$").matchEntire(value.trim()) ?: return null
         return (match.groupValues[1].toInt() * 60 + match.groupValues[2].toInt()).takeIf { it in 180..1200 }

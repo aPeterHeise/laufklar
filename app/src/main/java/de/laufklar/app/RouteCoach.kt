@@ -42,7 +42,7 @@ class RouteMatcher(history: List<Run>) {
         val probes = mutableListOf(tail.first())
         tail.drop(1).forEach { if (it.meters - probes.last().meters >= 60) probes.add(it) }
         if (probes.last() != last) probes.add(last)
-        for ((reference, nodes) in references) {
+        for ((reference, nodes) in references.sortedBy{if(Metrics.sameReadiness(run,it.first))0 else 1}) {
             if (reference.id == run.id || reference.started >= run.started || Metrics.distance(run.points.first(), reference.points.first()) > 100) continue
             val ends = nodes.indices.filter { abs(nodes[it].meters - last.meters) <= maxOf(200.0, last.meters * .15) && Metrics.distance(last.point, nodes[it].point) <= 35 }
             for (endIndex in ends.sortedBy { Metrics.distance(last.point, nodes[it].point) }) {
@@ -69,6 +69,7 @@ class RouteMatcher(history: List<Run>) {
     }
 
     private fun compare(current: Run, reference: Run, a: RouteNode, b: RouteNode, x: RouteNode, y: RouteNode): String? {
+        if (!Metrics.sameReadiness(current, reference)) return null
         if (b.meters - a.meters < 450 || a.point.elapsed < 300 || x.point.elapsed < 300 || x.point.segment != y.point.segment) return null
         if (current.pauses.any { it.from < b.point.time && it.until > a.point.time } || reference.pauses.any { it.from < y.point.time && it.until > x.point.time }) return null
         val currentSeconds = b.point.elapsed - a.point.elapsed

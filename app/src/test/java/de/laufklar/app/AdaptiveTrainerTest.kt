@@ -16,6 +16,13 @@ class AdaptiveTrainerTest {
         val p=AdaptiveTrainer.plan(profile.copy(usualPace=null),listOf(easy(3),easy(8),easy(12)),now=now)
         assertTrue(p.startingPaceKnown);assertTrue(p.qualityAllowed);assertEquals(400,p.targetPace)
     }
+    @Test fun unrestedRunsCountAsLoadButDoNotTeachRestedPace(){
+        val history=listOf(easy(1),easy(2),easy(3)).map{it.copy(readiness="UNWELL")}
+        val p=AdaptiveTrainer.plan(profile.copy(usualPace=null),history,now=now)
+        assertFalse(p.startingPaceKnown);assertFalse(p.qualityAllowed);assertTrue(p.restRecommended)
+        val mixed=listOf(easy(3),easy(8),easy(12).copy(readiness="TIRED"))
+        assertFalse(AdaptiveTrainer.plan(profile.copy(usualPace=null),mixed,now=now).startingPaceKnown)
+    }
     @Test fun illnessAndFatigueDoNotEscalateTraining(){val history=listOf(easy(3),easy(8),easy(12));val sick=AdaptiveTrainer.plan(profile,history,readiness=Readiness.UNWELL,now=now);assertTrue(sick.restRecommended);assertFalse(sick.qualityAllowed);assertEquals(20,sick.easyMinutes);val tired=AdaptiveTrainer.plan(profile,history,readiness=Readiness.TIRED,now=now);assertFalse(tired.qualityAllowed)}
     @Test fun longBreakTriggersReturnAndGoalRemains(){val p=AdaptiveTrainer.plan(profile,listOf(easy(30,3600.0)),now=now);assertEquals(TrainingFocus.RETURN,p.focus);assertFalse(p.qualityAllowed);assertEquals(20,p.easyMinutes);assertEquals(300,profile.goalPace)}
     @Test fun returningPersistsForThreeRunsAfterBreak(){val p=AdaptiveTrainer.plan(profile,listOf(easy(3),easy(25),easy(29)),now=now);assertEquals(TrainingFocus.RETURN,p.focus);val q=AdaptiveTrainer.plan(profile,listOf(easy(2),easy(5),easy(8),easy(30)),now=now);assertEquals(TrainingFocus.BUILD,q.focus)}

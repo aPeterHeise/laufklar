@@ -194,7 +194,8 @@ class Coach(history: List<Run> = emptyList()) {
         var extra = ""
         if (normal && routeMatch != null && !routeNamed) {
             routeNamed = true
-            extra = "Ich erkenne deine Strecke. Ich vergleiche passende Abschnitte automatisch mit deinem letzten passenden Lauf."
+            extra = if(Metrics.sameReadiness(run,routeMatch.reference))"Ich erkenne deine Strecke. Ich vergleiche passende Abschnitte bei gleicher Tagesform."
+                else "Ich erkenne deine Strecke. Wegen der anderen Tagesform lasse ich den Leistungsvergleich heute weg."
         } else if (normal && settled && ready && routeMatch?.comparison != null && comparisonCount < 1 && positiveCount < 2 && run.meters - lastComparisonMeters >= 1_000) {
             comparisonCount++; lastComparisonMeters = run.meters
             return emit(run, CueKind.PROGRESS, "$base ${routeMatch.comparison}")

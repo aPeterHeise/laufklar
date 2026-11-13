@@ -63,13 +63,13 @@ import kotlin.math.*
             }
             if(benchmarks.isEmpty())Text("Für längere Tempo-/Pulsvergleiche fehlen noch 20 gleichmäßige Minuten nach dem Aufwärmen mit guter Pulsabdeckung. Kürzere Streckenvergleiche entstehen bereits während deiner normalen Runde.",color=Lime,fontSize=13.sp)
             benchmarks.take(6).forEach{(r,pace,hr)->
-                HorizontalDivider(color=Muted.copy(alpha=.2f));Text(dateText(r.started),fontSize=12.sp,color=Muted)
+                HorizontalDivider(color=Muted.copy(alpha=.2f));Text("${dateText(r.started)} · ${Readiness.entries.firstOrNull{it.name==r.readiness}?.label?:"Unbekannt"}",fontSize=12.sp,color=Muted)
                 Row(Modifier.fillMaxWidth()){Stat(Metrics.pace(pace),"min/km nach Warm-up",Lime);Stat(hr.roundToInt().toString(),"Ø bpm")}
                 Metrics.drift(r)?.let{drift->Text("Puls/Tempo-Verhältnis, zweite Hälfte: ${"%+.1f".format(Locale.GERMANY,drift)} %. Beschreibender Wert; keine Gut-/Schlecht-Grenze.",color=Muted,fontSize=12.sp)}
             }
             if(benchmarks.size>=2){val a=benchmarks[0];val b=benchmarks[1]
-                if(a.first.mode==b.first.mode&&abs(a.third-b.third)<=5){val delta=b.second-a.second;Text("Letzte zwei vergleichbare Läufe: ${abs(delta).roundToInt()} s/km ${if(delta>=0)"schneller"else "langsamer"}, bei ähnlichem Durchschnittspuls (±5 bpm). Ein einzelner Vergleich ist noch kein Trend.",color=Lime,fontSize=13.sp)}
-                else Text("Die letzten Vergleichsläufe unterscheiden sich im Puls oder Modus. Daraus wird kein Fortschrittsurteil berechnet.",color=Muted,fontSize=12.sp)
+                if(a.first.mode==b.first.mode&&Metrics.sameReadiness(a.first,b.first)&&abs(a.third-b.third)<=5){val delta=b.second-a.second;Text("Letzte zwei vergleichbare Läufe: ${abs(delta).roundToInt()} s/km ${if(delta>=0)"schneller"else "langsamer"}, bei ähnlichem Durchschnittspuls (±5 bpm). Ein einzelner Vergleich ist noch kein Trend.",color=Lime,fontSize=13.sp)}
+                else Text("Die letzten Vergleichsläufe unterscheiden sich in Tagesform, Puls oder Modus. Daraus wird kein Fortschrittsurteil berechnet.",color=Muted,fontSize=12.sp)
             }
         }
         CardBlock{Eyebrow("Wie deine Werte helfen");Text("Alter und Geschlecht bestimmen die Vergleichsgruppe für deine Studien-Zielvorschläge. Deine tatsächlichen Läufe, dein Puls und dein Belastungsgefühl steuern das Training. Gewicht allein liefert keine persönliche Soll-Pace oder Pulszone. Hitze, Steigung, Schlaf und Messfehler können den Puls zusätzlich verändern.",color=Muted,lineHeight=23.sp);Text("Die App schätzt weder VO₂max noch eine Diagnose. Deine ärztliche Aussage zur Zone 2 solltest du vor intensiveren Einheiten konkretisieren lassen.",color=Peach,fontSize=13.sp)}
@@ -140,7 +140,7 @@ import kotlin.math.*
         }
         CardBlock{
             Eyebrow("Audio-Coach")
-            Toggle("Outdoor-Läufe automatisch pausieren","Bei etwa 8 Sekunden Stillstand pausieren, nach 3 Sekunden Bewegung fortsetzen. Mit Ansage bei aktiviertem Audio. Manuelle Pausen bleiben bestehen.",autoPause,{autoPause=it})
+            Toggle("Outdoor-Läufe automatisch pausieren","Bei etwa 2 Sekunden Stillstand pausieren, nach 1 Sekunde Bewegung fortsetzen. Mit Ansage bei aktiviertem Audio. Manuelle Pausen bleiben bestehen.",autoPause,{autoPause=it})
             Toggle("Ansagen während des Laufs","Pace, Gesamtstrecke, Puls und nächster Trainingsschritt",audio,{audio=it})
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){listOf(250,500,1000).forEach{m->FilterChip(selected=cue==m,onClick={cue=m},label={Text("$m m")})}}
             Text("Distanzinfos und Coaching sind getrennt. Der Coach erklärt eine nötige Entlastung höchstens zweimal ausführlicher und bestätigt sinkenden Puls. Geschätzte Zonen werden nicht als gemessene persönliche Grenze behandelt. Ohne frischen Puls keine Temposteigerung.",color=Muted,fontSize=12.sp,lineHeight=19.sp)

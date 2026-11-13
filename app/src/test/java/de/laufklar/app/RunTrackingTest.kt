@@ -12,44 +12,72 @@ class RunTrackingTest {
         pulses = (1..60).map { CooldownPulse(100_000 + it * 1000L, if (it < 55) 160 - it else endBpm) }
     )
 
-    @Test fun briefStopsDoNotPauseButEightSecondsDo() {
+    @Test fun briefStopsDoNotPauseButTwoSecondsDo() {
         val detector = AutoPauseDetector()
-        (0..7).forEach { assertNull(detector.sample(.1, it * 1000L, false)) }
-        assertEquals(AutoPauseDetector.Action.PAUSE, detector.sample(.1, 8_000, false))
+        (0..1).forEach { assertNull(detector.sample(.1, it * 1000L, false)) }
+        assertEquals(AutoPauseDetector.Action.PAUSE, detector.sample(.1, 2_000, false))
     }
 
     @Test fun walkingResetsStationaryDetection() {
         val detector = AutoPauseDetector()
-        (0..5).forEach { assertNull(detector.sample(0.0, it * 1000L, false)) }
-        assertNull(detector.sample(.7, 6_000, false))
-        (7..14).forEach { assertNull(detector.sample(0.0, it * 1000L, false)) }
-        assertEquals(AutoPauseDetector.Action.PAUSE, detector.sample(0.0, 15_000, false))
+        (0..1).forEach { assertNull(detector.sample(0.0, it * 1000L, false)) }
+        assertNull(detector.sample(.7, 2_000, false))
+        (3..4).forEach { assertNull(detector.sample(0.0, it * 1000L, false)) }
+        assertEquals(AutoPauseDetector.Action.PAUSE, detector.sample(0.0, 5_000, false))
     }
 
     @Test fun MissingOrStaleGpsCannotTriggerPause() {
         val detector = AutoPauseDetector()
-        (0..7).forEach { detector.sample(0.0, it * 1000L, false) }
-        assertNull(detector.sample(null, 8_000, false))
-        assertNull(detector.sample(0.0, 9_000, false))
+        (0..1).forEach { detector.sample(0.0, it * 1000L, false) }
+        assertNull(detector.sample(null, 2_000, false))
+        assertNull(detector.sample(0.0, 3_000, false))
         assertNull(detector.sample(0.0, 30_000, false))
         assertNull(detector.sample(Double.NaN, 31_000, false))
         assertNull(detector.sample(-1.0, 32_000, false))
     }
 
-    @Test fun resumeRequiresThreeSecondsOfMovementAndRejectsOneSpike() {
+    @Test fun resumeRequiresOneSecondOfMovementAndRejectsOneSpike() {
         val detector = AutoPauseDetector()
         assertNull(detector.sample(2.0, 0, true))
         assertNull(detector.sample(.3, 1_000, true))
-        (2..4).forEach { assertNull(detector.sample(.9, it * 1000L, true)) }
-        assertEquals(AutoPauseDetector.Action.RESUME, detector.sample(.9, 5_000, true))
+        assertNull(detector.sample(.9, 2_000, true))
+        assertEquals(AutoPauseDetector.Action.RESUME, detector.sample(.9, 3_000, true))
     }
 
     @Test fun resetForManualPauseDiscardsMovementCandidate() {
         val detector = AutoPauseDetector()
-        detector.sample(1.0, 0, true); detector.sample(1.0, 1_000, true)
+        detector.sample(1.0, 0, true)
         detector.reset()
-        assertNull(detector.sample(1.0, 3_000, true))
-        assertNull(detector.sample(1.0, 4_000, true))
+        assertNull(detector.sample(1.0, 1_000, true))
+    }
+
+    @Test fun delayedStationaryFixesCannotPauseAfterLeavingTheTrafficLight() {
+        val detector = AutoPauseDetector()
+        (0..5).forEach { assertNull(detector.sample(0.0, it*1000L, false, receivedAt=8_000)) }
+        assertNull(detector.sample(2.5, 8_000, false, receivedAt=8_000))
+        assertNull(detector.sample(0.0, 6_000, false, receivedAt=8_000))
+        assertNull(detector.sample(0.0, 7_000, false, receivedAt=8_000))
+        assertNull(detector.sample(2.5, 9_000, false))
+    }
+
+    @Test fun duplicateAndOutOfOrderFixesDoNotChangeTheLatestMovement() {
+        val detector = AutoPauseDetector()
+        assertNull(detector.sample(0.0, 0, false))
+        assertNull(detector.sample(2.0, 1_000, false))
+        assertNull(detector.sample(0.0, 1_000, false))
+        assertNull(detector.sample(0.0, 500, false))
+        assertNull(detector.sample(0.0, 2_000, false))
+        assertNull(detector.sample(0.0, 3_000, false))
+        assertEquals(AutoPauseDetector.Action.PAUSE, detector.sample(0.0, 4_000, false))
+    }
+
+    @Test fun oldFixBreaksAStopCandidateAndNeedsNewEvidence() {
+        val detector = AutoPauseDetector()
+        assertNull(detector.sample(0.0, 0, false))
+        assertNull(detector.sample(0.0, 1_000, false, receivedAt=3_000))
+        assertNull(detector.sample(0.0, 3_000, false))
+        assertNull(detector.sample(0.0, 4_000, false))
+        assertEquals(AutoPauseDetector.Action.PAUSE, detector.sample(0.0, 5_000, false))
     }
 
     @Test fun spokenDistancesHaveNoTrailingZeros() {
