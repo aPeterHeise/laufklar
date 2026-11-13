@@ -4,13 +4,13 @@ Native Android-App für Outdoor-Läufe und Laufband, mit direktem Bluetooth-Live
 
 ## Installieren
 
-Die installierbare APK und ihre SHA-256-Prüfsumme findest du im [GitHub-Release v0.1.3](https://github.com/aPeterHeise/laufklar/releases/tag/v0.1.3). Die lokale persönliche Vorschau liegt unter `dist/laufklar-preview.apk`. Auf das Android-Telefon übertragen, dort öffnen und die Installation aus der verwendeten Datei-App erlauben. Android 14 oder neuer wird benötigt. Die APK ist für persönliches Sideloading signiert, keine Play-Store-Veröffentlichung. Bei Updates über die bestehende App installieren, nicht vorher deinstallieren: Deinstallation entfernt den lokalen Verlauf.
+Die installierbare APK und ihre SHA-256-Prüfsumme findest du im [GitHub-Release v0.1.4](https://github.com/aPeterHeise/laufklar/releases/tag/v0.1.4). Die lokale persönliche Vorschau liegt unter `dist/laufklar-preview.apk`. Auf das Android-Telefon übertragen, dort öffnen und die Installation aus der verwendeten Datei-App erlauben. Android 14 oder neuer wird benötigt. Die APK ist für persönliches Sideloading signiert, keine Play-Store-Veröffentlichung. Bei Updates über die bestehende App installieren, nicht vorher deinstallieren: Deinstallation entfernt den lokalen Verlauf.
 
 1. In **Google Health → Verbindungen → Fitbit Air → Herzfrequenz teilen → Starten** die Übertragung aktivieren.
 2. In Laufklar **Pulssensor verbinden**, Bluetooth-Freigaben erteilen, das Air auswählen und gegebenenfalls die Android-Pairingabfrage bestätigen. Warten, bis Live-Puls erscheint.
 3. Unter **Profil → Audio-Coach → Ansage testen** die Stimme prüfen. Eine deutsche Offline-Stimme muss in Androids Sprachausgabe installiert sein.
 4. **Profil → Health Connect verbinden** öffnen und die Schreibrechte erteilen. GPS-Routen sind separat optional. Danach können andere freigegebene Apps die Aufzeichnung aus Health Connect lesen.
-5. Draußen präzisen Standort erlauben. Für das Laufband sind keine Standortrechte nötig. Bei verstelltem Laufbandtempo die km/h in der Live-Ansicht aktualisieren; die Enddistanz anschließend übernehmen.
+5. Draußen präzisen Standort erlauben. Für das Laufband sind keine Standortrechte nötig. Bei verstelltem Laufbandtempo die km/h in der Live-Ansicht aktualisieren. Beim Beenden die tatsächliche Enddistanz vom Laufband eintragen oder die Schätzung übernehmen.
 
 Ein **grüner Punkt vor dem Puls** zeigt an, dass die Verbindung steht und ein höchstens zehn Sekunden alter Messwert vorliegt. Bei fehlenden oder veralteten Werten ist der Punkt grau. Auf der Laufstartseite wird das gespeicherte Fitbit direkt verbunden, auch ohne neuen Bluetooth-Suchtreffer. Unter **Pulssensor verbinden → Gespeicherten Sensor verbinden** lässt sich die Verbindung neu aufbauen; **Sensor freigeben** trennt sie ausdrücklich.
 
@@ -46,12 +46,14 @@ Eine vollständig absolvierte, gut verträgliche Tempoeinheit mit brauchbaren Pu
 
 ## Aufzeichnung und Coaching
 
-- GPS-Aufzeichnung in einem Foreground Service bei ausgeschaltetem Bildschirm, mit laufender Android-Benachrichtigung; Pause/Fortsetzen auch dort möglich.
+- GPS-Aufzeichnung in einem Foreground Service bei ausgeschaltetem Bildschirm. Ein weißes Läufer-Symbol in der Statusleiste und die laufende Android-Benachrichtigung bleiben während einer laufenden oder pausierten Aufzeichnung sichtbar; nach Speichern oder Verwerfen verschwinden sie. Android-Benachrichtigungen müssen erlaubt sein. Der Aufzeichnungskanal bleibt ohne Ton und Vibration; Pause/Fortsetzen ist auch in der Benachrichtigung möglich.
+- Die Live-Karte folgt automatisch dem letzten gültigen GPS-Punkt und behält die Zoomstufe bei. Manuelles Verschieben schaltet das Folgen aus; mit dem Positionssymbol oben rechts wird es wieder aktiviert. Gespeicherte Läufe öffnen weiterhin mit einer Übersicht der gesamten Route.
+- **Beenden** pausiert die Aufzeichnung für die Abschlussauswahl. **Lauf speichern** bzw. **Schätzung speichern** übernimmt den Lauf, **Nicht speichern** verwirft ihn samt Wiederherstellungspunkt ohne Health-Connect-Export. **Zurück zum Lauf** setzt eine zuvor laufende Aufzeichnung fort; ein bereits pausierter Lauf bleibt pausiert. Die Zeit in der Abschlussauswahl verlängert einen dort gespeicherten Lauf nicht.
 - Ungenaue GPS-Fixes und unrealistische Sprünge werden verworfen. Pausen und lange GPS-Lücken bilden getrennte Kartensegmente. Fehlende Strecke wird nicht erfunden.
 - Bluetooth Heart Rate Service 0x180D / Measurement 0x2A37, 8-/16-Bit-Werte, Kontaktstatus, Verbindungsanzeige und begrenzte Wiederverbindungsversuche.
 - Pulsglättung: Median der letzten 15 Sekunden, mindestens drei Werte, jüngster Wert maximal zehn Sekunden alt.
 - Optionale deutsche Ansagen alle 250, 500 oder 1000 m: Gesamtstrecke, letzte 60-Sekunden-Pace, Puls und Coaching. Bei dauerhaft erhöhtem Puls frühere Reduktionshinweise; Intervallwechsel nach Zeit. Ohne verlässlichen Puls keine Beschleunigungsaufforderung.
-- Laufbandtempo wird manuell angegeben und integriert. Kein automatischer Zugriff auf das Laufband. Ohne Tempoeingabe gibt es Zeit/Puls, aber keine Live-Distanz/Pace oder Distanzansagen. Die Enddistanz lässt sich nachtragen.
+- Laufbandstrecke wird abschnittsweise aus eingegebener Geschwindigkeit × aktiver Zeit berechnet. Tempoänderungen gelten ab ihrer Eingabe, Pausen zählen nicht. Jeder neue Lauf beginnt ohne voreingestelltes Tempo. Ohne Tempoeingabe gibt es Zeit/Puls, aber keine Live-Distanz/Pace oder Distanzansagen. Beim Beenden lässt sich die tatsächliche Laufbanddistanz eintragen (0,01–200 km); leer bleibt es bei der Schätzung. Die Korrektur gilt bereits beim ersten Health-Connect-Export und lässt sich später in den Laufdetails ändern. Kein automatischer Zugriff auf das Laufband.
 - Aktive Zeit nutzt Androids monotone Uhr. Verschlüsselte Checkpoints alle fünf Sekunden. Bei Prozessabbruch wird beim nächsten Start bis zum letzten Checkpoint gerettet, nicht unsichtbar weitergerechnet. Die App setzt nach einem Neustart den Lauf nicht automatisch fort. Maximale Aufzeichnungsdauer sechs Stunden.
 - Historie mit rollierender Wochenübersicht, Karte, Pulskurve, Zonenzeit und Messabdeckung; Belastung (1–10), Notizen, JSON-/GPX-Export, lokales Löschen.
 

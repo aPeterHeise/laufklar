@@ -28,6 +28,7 @@ object Live {
     val bpm=MutableStateFlow<Pair<Int,Long>?>(null)
     val beltSpeed=MutableStateFlow(0.0)
     val saving=MutableStateFlow(false)
+    val reviewing=MutableStateFlow(false)
     val audioStatus=MutableStateFlow("Offline-Stimme wird vorbereitet")
     lateinit var sensor:HeartRateSensor
     lateinit var sensorOwnership:SensorOwnership
@@ -59,23 +60,30 @@ class AudioCoach(context:android.content.Context) {
         })
     }
     fun speak(text:String){if(!ready){pending=text;return};if(manager.requestAudioFocus(focus)==AudioManager.AUDIOFOCUS_REQUEST_GRANTED){tts?.speak(text.replace(Regex("(\\d{1,2}):(\\d{2})")){"${it.groupValues[1]} Minuten ${it.groupValues[2]} Sekunden pro Kilometer"},TextToSpeech.QUEUE_FLUSH,null,"coach-${SystemClock.elapsedRealtime()}")}}
-    fun close(){tts?.stop();tts?.shutdown();manager.abandonAudioFocusRequest(focus)}
+    fun stop(){pending=null;tts?.stop();manager.abandonAudioFocusRequest(focus)}
+    fun close(){stop();tts?.shutdown()}
 }
 class RunService:Service(),LocationListener {
     companion object {
         var instance:RunService?=null;private set
         const val START="start";const val PAUSE="pause";const val RESUME="resume";const val FINISH="finish"
+        const val REVIEW="review";const val CANCEL_REVIEW="cancel_review";const val DISCARD="discard"
+        const val FINISH_METERS="finish_meters"
+        const val CHANNEL="running_status"
     }
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
     private lateinit var audio:AudioCoach
     private lateinit var profile:Profile
     private lateinit var locations:LocationManager
     private var timer:Job?=null
+    private var checkpointJob:Job?=null
     private var wake:PowerManager.WakeLock?=null
     private var lastTick=0L
     private var startTick=0L
     private var startWall=0L
     private var pauseWall:Long?=null
+    private var reviewEnd:Long?=null
+    private var reviewWasPaused=false
     private var segment=0
     private var previousPoint:TrackPoint?=null
     private var lastCheckpoint=0L
@@ -83,10 +91,16 @@ class RunService:Service(),LocationListener {
     private var finishing=false
     override fun onBind(intent:Intent?)=null
     override fun onCreate(){super.onCreate();instance=this;locations=getSystemService(LocationManager::class.java);audio=AudioCoach(this)
-        getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("running","Laufaufzeichnung",NotificationManager.IMPORTANCE_LOW))
+        getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL,"Aktive Laufaufzeichnung",NotificationManager.IMPORTANCE_DEFAULT).apply{
+            description="Statussymbol während eines aktiven oder pausierten Laufs"
+            setSound(null,null);enableVibration(false);setShowBadge(false)
+        })
     }
     override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int{
-        when(intent?.action){START->start(intent);PAUSE->pause();RESUME->resume();FINISH->finish()}
+        when(intent?.action){
+            START->start(intent);PAUSE->pause();RESUME->resume();REVIEW->review();CANCEL_REVIEW->cancelReview();DISCARD->finish(discard=true)
+            FINISH->finish(correctedMeters=if(intent.hasExtra(FINISH_METERS))intent.getDoubleExtra(FINISH_METERS,Double.NaN)else null)
+        }
         return START_NOT_STICKY
     }
     private fun notification():Notification {
@@ -94,10 +108,11 @@ class RunService:Service(),LocationListener {
         val action=if(Live.paused.value)RESUME else PAUSE
         val pause=PendingIntent.getService(this,1,Intent(this,RunService::class.java).setAction(action),PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val r=Live.run.value
-        return Notification.Builder(this,"running").setSmallIcon(R.drawable.ic_launcher).setContentTitle(if(Live.paused.value)"Lauf pausiert" else "Laufklar zeichnet auf")
+        return Notification.Builder(this,CHANNEL).setSmallIcon(R.drawable.ic_stat_running).setContentTitle(if(Live.reviewing.value)"Lauf abschließen"else if(Live.paused.value)"Lauf pausiert" else "Laufklar zeichnet auf")
             .setContentText(r?.let{"${Metrics.km(it.meters)} km · ${Metrics.duration(it.activeSeconds)}"}?:"Lauf wird vorbereitet")
             .setContentIntent(open).setOngoing(true).setVisibility(Notification.VISIBILITY_PRIVATE)
-            .addAction(Notification.Action.Builder(null,if(Live.paused.value)"Fortsetzen" else "Pause",pause).build()).build()
+            .setOnlyAlertOnce(true).setCategory(Notification.CATEGORY_SERVICE).setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+            .addAction(Notification.Action.Builder(null,if(Live.reviewing.value)"Lauf prüfen"else if(Live.paused.value)"Fortsetzen" else "Pause",if(Live.reviewing.value)open else pause).build()).build()
     }
     @SuppressLint("WakelockTimeout")
     private fun start(intent:Intent){
@@ -116,14 +131,18 @@ class RunService:Service(),LocationListener {
         Live.sensor.rememberDevice(profile.sensorAddress,profile.sensorName)
         Live.sensorOwnership.device(profile.sensorAddress);Live.sensorOwnership.recording(true)
         Live.run.value=Run(started=startWall,mode=mode,workout=workout,zoneBounds=profile.bounds,estimatedZones=profile.estimated,phases=plan.phases(workout),targetPace=plan.targetPace,coachReason=plan.reason,readiness=readiness.name)
-        Live.paused.value=false;Live.saving.value=false;finishing=false;coach.reset(0.0,profile.cueMeters)
+        Live.paused.value=false;Live.saving.value=false;Live.reviewing.value=false;Live.beltSpeed.value=0.0;finishing=false;coach.reset(0.0,profile.cueMeters)
         wake=getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"laufklar:run").apply{acquire(6*60*60*1000L)}
         if(mode==RunMode.OUTDOOR)startGps()
+        startTimer()
+    }
+    private fun startTimer(){
         timer=scope.launch{
             while(isActive){
                 tick()
                 if(SystemClock.elapsedRealtime()-lastCheckpoint>=5000){
-                    try{Live.run.value?.let{repo().checkpoint(it,wall())};lastCheckpoint=SystemClock.elapsedRealtime()}
+                    try{Live.run.value?.let{repo().checkpoint(it,reviewEnd?:wall())};lastCheckpoint=SystemClock.elapsedRealtime()}
+                    catch(e:CancellationException){throw e}
                     catch(e:Exception){Live.message.value="Speichern fehlgeschlagen. Aufzeichnung pausiert; Speicherplatz prüfen.";pause()}
                     getSystemService(NotificationManager::class.java).notify(71,notification())
                 }
@@ -190,23 +209,57 @@ class RunService:Service(),LocationListener {
         Live.run.value=r.copy(pulses=r.pulses+Pulse(now,r.activeSeconds,bpm))
     }
     fun speed(kmh:Double){if(kmh.isFinite()&&kmh in 0.0..25.0){tick();Live.beltSpeed.value=kmh}}
-    private fun pause(){if(Live.run.value==null||Live.paused.value||finishing)return;tick();Live.paused.value=true;pauseWall=wall();segment++;previousPoint=null;Live.message.value="Pausiert · Zeit und Strecke stehen";scope.launch{runCatching{repo().checkpoint(Live.run.value!!,wall())}};getSystemService(NotificationManager::class.java).notify(71,notification())}
-    private fun resume(){if(Live.run.value==null||!Live.paused.value||finishing)return;Live.sensorOwnership.recording(true);val r=Live.run.value!!;pauseWall?.let{Live.run.value=r.copy(pauses=r.pauses+PauseSpan(it,wall()))};pauseWall=null;lastTick=SystemClock.elapsedRealtime();Live.paused.value=false;Live.message.value="Weiter geht’s. Locker anlaufen.";getSystemService(NotificationManager::class.java).notify(71,notification())}
-    private fun finish(){
+    private fun pause(){
+        if(Live.run.value==null||Live.paused.value||finishing)return
+        tick();Live.paused.value=true;pauseWall=wall();segment++;previousPoint=null;audio.stop()
+        Live.message.value="Pausiert · Zeit und Strecke stehen"
+        val snapshot=Live.run.value!!;val time=wall()
+        checkpointJob?.cancel();checkpointJob=scope.launch{runCatching{repo().checkpoint(snapshot,time)}}
+        getSystemService(NotificationManager::class.java).notify(71,notification())
+    }
+    private fun resume(){
+        if(Live.run.value==null||!Live.paused.value||finishing)return
+        Live.reviewing.value=false;reviewEnd=null;Live.sensorOwnership.recording(true)
+        val r=Live.run.value!!;val now=wall()
+        pauseWall?.takeIf{it<now}?.let{Live.run.value=r.copy(pauses=r.pauses+PauseSpan(it,now))}
+        pauseWall=null;lastTick=SystemClock.elapsedRealtime();Live.paused.value=false
+        Live.message.value="Weiter geht’s. Locker anlaufen."
+        if(r.mode==RunMode.OUTDOOR)startGps()
+        getSystemService(NotificationManager::class.java).notify(71,notification())
+    }
+    private fun review(){
+        if(Live.run.value==null||finishing||Live.reviewing.value)return
+        reviewWasPaused=Live.paused.value;pause();reviewEnd=wall();Live.reviewing.value=true
+        getSystemService(NotificationManager::class.java).notify(71,notification())
+    }
+    private fun cancelReview(){
+        if(!Live.reviewing.value||finishing)return
+        Live.reviewing.value=false;reviewEnd=null
+        if(!reviewWasPaused)resume()else getSystemService(NotificationManager::class.java).notify(71,notification())
+    }
+    private fun finish(correctedMeters:Double?=null,discard:Boolean=false){
         if(finishing||Live.run.value==null)return
-        tick();finishing=true;Live.saving.value=true;timer?.cancel();locations.removeUpdates(this)
+        if(correctedMeters!=null&&(Live.run.value!!.mode!=RunMode.TREADMILL||!correctedMeters.isFinite()||correctedMeters !in 10.0..200000.0)){
+            Live.message.value="Bitte eine Laufbanddistanz zwischen 0,01 und 200 km eingeben.";return
+        }
+        tick();finishing=true;Live.saving.value=true;timer?.cancel();locations.removeUpdates(this);audio.stop()
         Live.sensorOwnership.recording(false)
-        val old=Live.run.value!!;val end=wall().coerceAtLeast(old.started+1)
-        val run=old.copy(ended=end,pauses=old.pauses+listOfNotNull(pauseWall?.let{PauseSpan(it,end)}))
+        val old=Live.run.value!!;val end=(reviewEnd?:wall()).coerceAtLeast(old.started+1)
+        val run=old.copy(ended=end,correctedMeters=correctedMeters?:old.correctedMeters,pauses=old.pauses+listOfNotNull(pauseWall?.takeIf{it<end}?.let{PauseSpan(it,end)}))
         scope.launch{
             try{
-                repo().save(run,true)
-                if(profile.healthExport) runCatching { HealthExporter(this@RunService).export(run) }
-                Live.run.value=null;Live.paused.value=false;Live.message.value="Lauf gespeichert"
+                timer?.join();checkpointJob?.cancelAndJoin()
+                if(discard)repo().discardCheckpoint(run.id)else{
+                    repo().save(run,true)
+                    if(profile.healthExport) runCatching { HealthExporter(this@RunService).export(run) }
+                }
+                Live.run.value=null;Live.paused.value=false;Live.reviewing.value=false;Live.beltSpeed.value=0.0
+                Live.message.value=if(discard)"Lauf nicht gespeichert"else "Lauf gespeichert"
                 stopForeground(STOP_FOREGROUND_REMOVE);stopSelf()
-            }catch(e:Exception){finishing=false;Live.paused.value=true;Live.message.value="Speichern fehlgeschlagen. Lauf bleibt geöffnet; bitte erneut speichern."}
+            }catch(e:CancellationException){throw e}
+            catch(e:Exception){finishing=false;Live.paused.value=true;pauseWall=pauseWall?:end;startTimer();Live.message.value="Abschließen fehlgeschlagen. Lauf bleibt geöffnet; bitte erneut versuchen."}
             finally{Live.saving.value=false}
         }
     }
-    override fun onDestroy(){Live.sensorOwnership.recording(false);timer?.cancel();scope.cancel();locations.removeUpdates(this);audio.close();if(wake?.isHeld==true)wake?.release();instance=null;super.onDestroy()}
+    override fun onDestroy(){Live.sensorOwnership.recording(false);timer?.cancel();checkpointJob?.cancel();scope.cancel();locations.removeUpdates(this);audio.close();if(wake?.isHeld==true)wake?.release();instance=null;super.onDestroy()}
 }

@@ -225,7 +225,8 @@ fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
 @Composable fun ActiveScreen(run:Run,profile:Profile,onConnect:()->Unit){
     val context=LocalContext.current;val paused by Live.paused.collectAsStateWithLifecycle();val saving by Live.saving.collectAsStateWithLifecycle()
     val message by Live.message.collectAsStateWithLifecycle();val gps by Live.gps.collectAsStateWithLifecycle();val speed by Live.beltSpeed.collectAsStateWithLifecycle();val audio by Live.audioStatus.collectAsStateWithLifecycle()
-    var finish by remember{mutableStateOf(false)};var editSpeed by remember{mutableStateOf(false)};var speedInput by remember{mutableStateOf("")}
+    val reviewing by Live.reviewing.collectAsStateWithLifecycle()
+    var editSpeed by remember{mutableStateOf(false)};var speedInput by remember{mutableStateOf("")}
     var now by remember{mutableLongStateOf(System.currentTimeMillis())};LaunchedEffect(Unit){while(true){now=RunService.instance?.timeNow()?:System.currentTimeMillis();delay(1000)}}
     val hr=Metrics.freshHr(run.pulses,maxOf(now,RunService.instance?.timeNow()?:System.currentTimeMillis()))
     val phases=run.phases.ifEmpty{Training.fallback(run.workout)};val phaseIndex=Training.phaseAt(phases,run.activeSeconds)
@@ -249,20 +250,47 @@ fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
                 TextButton(onClick={speedInput=if(speed>0)"%.1f".format(Locale.GERMANY,speed)else "";editSpeed=true}){Text("${"%.1f".format(Locale.GERMANY,speed)} km/h",fontSize=25.sp)}
                 OutlinedIconButton(onClick={RunService.instance?.speed((speed+.5).coerceAtMost(25.0))},enabled=!paused&&!saving){Icon(Icons.Outlined.Add,"Tempo plus 0,5 km/h")}
             }
-            Text("Ändere hier den Wert, wenn du das Laufband verstellst. Die App steuert das Laufband nicht.",color=Muted,fontSize=12.sp)
+            Text("Strecke = Geschwindigkeit × aktive Zeit. Passe das Tempo bei jeder Änderung am Laufband an; Pausen zählen nicht. Am Ende kannst du die Laufbanddistanz prüfen und korrigieren.",color=Muted,fontSize=12.sp)
         }else{
             Text(gps,color=Muted,fontSize=12.sp)
-            if(run.points.isNotEmpty())RouteMap(run.points,profile.onlineMaps,Modifier.fillMaxWidth().height(210.dp).clip(RoundedCornerShape(20.dp)))
+            if(run.points.isNotEmpty())RouteMap(run.points,profile.onlineMaps,Modifier.fillMaxWidth().height(210.dp).clip(RoundedCornerShape(20.dp)),followPosition=true)
         }
         Row(horizontalArrangement=Arrangement.spacedBy(12.dp)){
             OutlinedButton(onClick={command(if(paused)RunService.RESUME else RunService.PAUSE)},enabled=!saving,modifier=Modifier.weight(1f).height(56.dp)){Icon(if(paused)Icons.Outlined.PlayArrow else Icons.Outlined.Pause,null);Text(if(paused)"Weiter" else "Pause")}
-            Button(onClick={finish=true},enabled=!saving,modifier=Modifier.weight(1f).height(56.dp)){Text(if(saving)"Speichere …"else "Beenden")}
+            Button(onClick={command(RunService.REVIEW)},enabled=!saving,modifier=Modifier.weight(1f).height(56.dp)){Text(if(saving)"Schließe ab …"else "Beenden")}
         }
         Text(if(profile.audio)audio else "Audio ausgeschaltet",color=Muted,fontSize=12.sp)
         TextButton(onClick=onConnect){Text("Pulsverbindung prüfen")}
     }
-    if(finish)AlertDialog(onDismissRequest={finish=false},title={Text("Lauf beenden?")},text={Text("${Metrics.km(run.meters)} km und ${Metrics.duration(run.activeSeconds)} aktive Zeit werden lokal gespeichert. Danach kannst du die Laufbandstrecke und dein Belastungsgefühl ergänzen.")},confirmButton={TextButton(onClick={finish=false;command(RunService.FINISH)}){Text("Lauf speichern")}},dismissButton={TextButton(onClick={finish=false}){Text("Weiterlaufen")}})
+    if(reviewing)FinishRunDialog(run,saving,message,onSave={meters->
+        context.startService(Intent(context,RunService::class.java).setAction(RunService.FINISH).apply{meters?.let{putExtra(RunService.FINISH_METERS,it)}})
+    },onDiscard={command(RunService.DISCARD)},onContinue={command(RunService.CANCEL_REVIEW)})
     if(editSpeed)AlertDialog(onDismissRequest={editSpeed=false},title={Text("Aktuelles Laufbandtempo")},text={Field("km/h (0–25)",speedInput,{speedInput=it})},confirmButton={TextButton(onClick={speedInput.replace(',','.').toDoubleOrNull()?.takeIf{it in 0.0..25.0}?.let{RunService.instance?.speed(it);editSpeed=false}}){Text("Übernehmen")}},dismissButton={TextButton(onClick={editSpeed=false}){Text("Abbrechen")}})
+}
+@Composable fun FinishRunDialog(run:Run,saving:Boolean,message:String,onSave:(Double?)->Unit,onDiscard:()->Unit,onContinue:()->Unit){
+    var distance by rememberSaveable(run.id){mutableStateOf("")}
+    val treadmill=run.mode==RunMode.TREADMILL
+    val km=distance.trim().replace(',','.').toDoubleOrNull()
+    val valid=distance.isBlank()||(km!=null&&km.isFinite()&&km in .01..200.0)
+    AlertDialog(onDismissRequest={if(!saving)onContinue()},title={Text("Lauf beenden?")},text={
+        Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
+            Text("${Metrics.km(run.meters)} km${if(treadmill)" geschätzt"else ""} · ${Metrics.duration(run.activeSeconds)} aktive Zeit")
+            Text("Die Aufzeichnung ist während dieser Auswahl pausiert.",color=Muted)
+            if(treadmill){
+                Text("Welche Strecke zeigt dein Laufband? Leer lassen, um die Schätzung aus Tempo und aktiver Zeit zu übernehmen.")
+                OutlinedTextField(distance,{distance=it},label={Text("Enddistanz am Laufband · km")},enabled=!saving,isError=!valid,singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Decimal),modifier=Modifier.fillMaxWidth())
+                if(!valid)Text("Bitte 0,01 bis 200 km eingeben.",color=Peach)
+            }
+            Text("Nicht speichern verwirft diesen Lauf auch für den Verlauf und Health Connect.",fontSize=12.sp,color=Muted)
+            if(message.startsWith("Abschließen fehlgeschlagen"))Text(message,color=Peach)
+        }
+    },confirmButton={Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(4.dp)){
+        Button(onClick={onSave(if(treadmill&&distance.isNotBlank())km!!*1000 else null)},enabled=!saving&&valid,modifier=Modifier.fillMaxWidth()){
+            Text(if(saving)"Schließe ab …"else if(treadmill&&distance.isBlank())"Schätzung speichern"else "Lauf speichern")
+        }
+        TextButton(onClick=onDiscard,enabled=!saving,modifier=Modifier.fillMaxWidth()){Text("Nicht speichern",color=Peach)}
+        TextButton(onClick=onContinue,enabled=!saving,modifier=Modifier.fillMaxWidth()){Text("Zurück zum Lauf")}
+    }})
 }
 @Composable fun History(runs:List<Run>,onOpen:(Run)->Unit){Page{
     Heading("Deine Läufe.","Jede Runde zählt. Alles bleibt auf deinem Telefon.")

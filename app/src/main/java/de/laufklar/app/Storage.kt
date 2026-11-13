@@ -114,4 +114,7 @@ class Repository(context:Context) {
         runs.value=(runs.value.filterNot{it.id==run.id}+run).sortedByDescending{it.started}
     }}
     suspend fun delete(run:Run)=withContext(Dispatchers.IO){mutex.withLock{vault.delete("run-${run.id}");runs.value=runs.value.filterNot{it.id==run.id}}}
+    suspend fun discardCheckpoint(runId:String)=withContext(Dispatchers.IO){mutex.withLock{
+        if(vault.read("active")?.optString("id")==runId)vault.delete("active")
+    }}
 }
