@@ -28,6 +28,7 @@ import kotlin.math.*
 
 @Composable fun ProgressScreen(runs:List<Run>,profile:Profile){
     val weeks=(3 downTo 0).map{weekRuns(runs,it)};val maxDistance=weeks.maxOf{it.sumOf{r->r.distance}}.coerceAtLeast(1000.0)
+    val plan=remember(profile,runs){AdaptiveTrainer.plan(profile,runs)}
     val benchmarks=runs.filter{it.workout==Workout.BASELINE}.mapNotNull{r->Metrics.benchmark(r)?.let{Triple(r,it.first,it.second)}}
     Page{
         Heading("Fortschritt,\nder sich aufbaut.","Dein Maßstab bist du selbst. Vergleiche ähnliche Strecken, Temperaturen und Tagesformen.")
@@ -44,13 +45,16 @@ import kotlin.math.*
             Text("Rollierende 7-Tage-Zeiträume · Kilometer",color=Muted,fontSize=11.sp)
         }
         CardBlock{
-            Eyebrow("Dein Weg zu 10 km in 50:00",Lime)
-            Text("Woche ${profile.planWeek} von 12",fontSize=26.sp,fontWeight=FontWeight.SemiBold)
-            Text(when(profile.planWeek){in 1..3->"Zuerst Routine und lockere Ausdauer. Zwei entspannte Läufe pro Woche, optional ein kurzer dritter. Eine Standortbestimmung ersetzt einen lockeren Lauf.";in 4..8->"Locker bleibt die Basis. Wenn die Arzt-Rückfrage geklärt ist und du dich gut erholst, kann eine kontrollierte Tempoeinheit einen lockeren Lauf ersetzen.";else->"Längere lockere Läufe und höchstens eine Tempoeinheit pro Woche. Das Zieltempo 5:00 ist eine Richtung; ein 50-Minuten-Lauf ist noch keine Zusage."},color=Muted,lineHeight=23.sp)
-            Text("Mindestens ein freier Tag zwischen Läufen. Bei ungewöhnlicher Müdigkeit, Krankheit oder Schmerzen reduzieren oder pausieren. Wochen nur weiterstellen, wenn die aktuelle Belastung gut vertragen wird.",fontSize=12.sp,color=Muted,lineHeight=19.sp)
+            Eyebrow("Dein dauerhaftes Ziel",Lime)
+            Text("${Metrics.km(profile.goalKm*1000)} km in ${Metrics.duration(profile.goalKm*profile.goalPace)}",fontSize=26.sp,fontWeight=FontWeight.SemiBold)
+            Text(plan.focus.label,color=Lime,fontWeight=FontWeight.SemiBold)
+            Text(plan.reason,color=Muted,lineHeight=23.sp)
+            Text("Der Trainer bewertet nach jedem Lauf neu: regelmäßige lockere Einheiten, passende längere Läufe und gelegentlich kontrolliertes Tempo. Nach Pausen oder hoher Belastung geht es zurück zum Wiedereinstieg. Es gibt kein Enddatum.",color=Muted,lineHeight=23.sp)
+            Text("Aktuelle Vorschläge: ${plan.easyMinutes} Minuten locker oder ${plan.longMinutes} Minuten länger locker."+if(plan.startingPaceKnown)" Tempoabschnitte bei Freigabe: ${plan.repetitions} × ${plan.workSeconds/60.0} Minuten, etwa ${Metrics.pace(plan.targetPace.toDouble())} min/km."else " Dein Ausgangstempo lerne ich erst aus deinen lockeren Läufen.",color=Lime,fontSize=13.sp)
+            Text("Ohne vollständige Tempoeinheit, Belastungsangabe und brauchbare Puls-/Tempodaten wird nicht automatisch schneller gefordert. Verbesserungen ändern jeweils nur eine Belastungsgröße. Eine Zielerreichung wird anhand der gesamten verstrichenen Zeit inklusive Pausen geprüft, getrennt nach Outdoor/Laufband.",color=Muted,fontSize=12.sp,lineHeight=19.sp)
         }
         CardBlock{
-            Eyebrow("Standortbestimmung")
+            Eyebrow("Fortschritt vergleichen")
             Text("Gleicher Puls. Mehr Tempo?",fontSize=24.sp,fontWeight=FontWeight.SemiBold)
             Text("Wähle eine flache Strecke oder dasselbe Laufband mit gleicher Steigung. 10 Minuten locker aufwärmen, dann 20 Minuten gleichmäßig und in ganzen Sätzen sprechend laufen. Kein Maximaltest. Alle 2–4 Wochen unter ähnlichen Bedingungen wiederholen.",color=Muted,lineHeight=23.sp)
             if(benchmarks.isEmpty())Text("Noch kein auswertbarer Vergleich. Benötigt werden 20 gleichmäßige Minuten nach dem Aufwärmen und mindestens 80 % Pulsabdeckung.",color=Lime,fontSize=13.sp)
@@ -64,7 +68,7 @@ import kotlin.math.*
                 else Text("Die letzten Vergleichsläufe unterscheiden sich im Puls oder Modus. Daraus wird kein Fortschrittsurteil berechnet.",color=Muted,fontSize=12.sp)
             }
         }
-        CardBlock{Eyebrow("Was deine Werte nicht sagen");Text("Es gibt keinen universellen Soll-Puls bei einer bestimmten Pace. Hitze, Steigung, Stress, Schlaf, Alkohol, Medikamente und Messfehler können den Puls verändern. 83 kg und männlich bestimmen deine Trainingszonen nicht.",color=Muted,lineHeight=23.sp);Text("Die App schätzt weder VO₂max noch eine Diagnose. Deine ärztliche Aussage zur Zone 2 solltest du vor intensiveren Einheiten konkretisieren lassen.",color=Peach,fontSize=13.sp)}
+        CardBlock{Eyebrow("Wie deine Werte helfen");Text("Alter und Geschlecht bestimmen die Vergleichsgruppe für deine Studien-Zielvorschläge. Deine tatsächlichen Läufe, dein Puls und dein Belastungsgefühl steuern das Training. Gewicht allein liefert keine persönliche Soll-Pace oder Pulszone. Hitze, Steigung, Schlaf und Messfehler können den Puls zusätzlich verändern.",color=Muted,lineHeight=23.sp);Text("Die App schätzt weder VO₂max noch eine Diagnose. Deine ärztliche Aussage zur Zone 2 solltest du vor intensiveren Einheiten konkretisieren lassen.",color=Peach,fontSize=13.sp)}
     }
 }
 @Composable fun ProfileScreen(profile:Profile,onSave:(Profile)->Unit,onConnect:()->Unit,onHealth:()->Unit,onPrivacy:()->Unit){
@@ -74,23 +78,43 @@ import kotlin.math.*
     var reserve by remember(profile){mutableStateOf(profile.reserveZones)};var custom by remember(profile){mutableStateOf(profile.customBounds?.joinToString(", ")?:"")}
     var audio by remember(profile){mutableStateOf(profile.audio)};var cue by remember(profile){mutableIntStateOf(profile.cueMeters)};var maps by remember(profile){mutableStateOf(profile.onlineMaps)}
     var health by remember(profile){mutableStateOf(profile.healthExport)};var route by remember(profile){mutableStateOf(profile.shareRoute)};var ready by remember(profile){mutableStateOf(profile.intensityReady)}
-    var week by remember(profile){mutableIntStateOf(profile.planWeek)};var pace by remember(profile){mutableStateOf(profile.usualPace.toString())};var error by remember{mutableStateOf<String?>(null)}
+    var goalKm by remember(profile){mutableStateOf(profile.goalKm.toString())};var goalMinutes by remember(profile){mutableStateOf((profile.goalKm*profile.goalPace/60).toString())};var frequency by remember(profile){mutableIntStateOf(profile.runsPerWeek)};var pace by remember(profile){mutableStateOf(profile.usualPace?.let{Metrics.pace(it.toDouble())}?:"")};var paceKnown by remember(profile){mutableStateOf(profile.usualPace!=null)};var error by remember{mutableStateOf<String?>(null)}
+    var goalPicker by remember{mutableStateOf<Profile?>(null)}
+    var resetGoalReference by remember{mutableStateOf(false)}
     val speech=remember{AudioCoach(context)};DisposableEffect(Unit){onDispose{speech.close()}}
+    val audioStatus by Live.audioStatus.collectAsState()
     fun draft():Profile?{
-        val a=age.toIntOrNull();val w=weight.replace(',','.').toDoubleOrNull();val max=maximum.toIntOrNull();val rest=resting.toIntOrNull();val p=pace.toIntOrNull()
+        val goal=goalKm.replace(',','.').toDoubleOrNull();val minutes=goalMinutes.replace(',','.').toDoubleOrNull()
+        val a=age.toIntOrNull();val w=weight.replace(',','.').toDoubleOrNull();val max=maximum.toIntOrNull();val rest=resting.toIntOrNull();val p=if(paceKnown)Metrics.parsePace(pace)else null
+        if(paceKnown&&p==null){error="Pace bitte als Minuten:Sekunden eingeben, z. B. 5:30 (zwischen 3:00 und 20:00), oder „Weiß ich noch nicht“ wählen.";return null}
         val bounds=if(custom.isBlank())null else custom.split(',',';').map{it.trim().toIntOrNull()}
-        if(a==null||w==null||p==null||(maximum.isNotBlank()&&max==null)||(resting.isNotBlank()&&rest==null)||(bounds!=null&&bounds.any{it==null})){error="Bitte gültige Zahlen eingeben. Zonengrenzen mit Komma trennen.";return null}
-        val draft=profile.copy(age=a,weight=w,sex=sex,measuredMax=max,restingHr=rest,reserveZones=reserve,customBounds=bounds?.filterNotNull(),audio=audio,cueMeters=cue,onlineMaps=maps,healthExport=health,shareRoute=route,intensityReady=ready,planWeek=week,usualPace=p)
+        if(goal==null||!goal.isFinite()||goal<=0||minutes==null||!minutes.isFinite()||minutes<=0||a==null||w==null||(maximum.isNotBlank()&&max==null)||(resting.isNotBlank()&&rest==null)||(bounds!=null&&bounds.any{it==null})){error="Bitte gültige Zahlen eingeben. Zonengrenzen mit Komma trennen.";return null}
+        val draft=profile.copy(age=a,weight=w,sex=sex,measuredMax=max,restingHr=rest,reserveZones=reserve,customBounds=bounds?.filterNotNull(),audio=audio,cueMeters=cue,onlineMaps=maps,healthExport=health,shareRoute=route,intensityReady=ready,goalKm=goal,goalPace=(minutes*60/goal).roundToInt(),runsPerWeek=frequency,usualPace=p)
         error=draft.validate();return draft.takeIf{error==null}
     }
     Page{
         Heading("Dein Profil.","Deine Grenzen. Dein Rhythmus.")
         CardBlock{
+            Eyebrow("Ein Ziel, das zu dir passt",Lime)
+            Text("${Metrics.km(profile.goalKm*1000)} km in ${Metrics.duration(profile.goalKm*profile.goalPace)}",fontSize=28.sp,fontWeight=FontWeight.SemiBold)
+            Text("Wähle eine Orientierung aus der Forschung und mach dein eigenes Ziel daraus.",color=Muted)
+            FullButton("Laufziel entdecken",Icons.Outlined.Explore){draft()?.let{resetGoalReference=it.age!=profile.age||it.sex!=profile.sex;goalPicker=it}}
+        }
+        CardBlock{
             Eyebrow("Ausgangspunkt")
             Field("Alter in Jahren",age,{age=it});Field("Gewicht in kg",weight,{weight=it})
-            Field("Geschlecht (frei editierbar)",sex,{sex=it},false)
-            Field("Bisherige Pace · Sekunden/km",pace,{pace=it})
-            Text("345 Sekunden = 5:45 min/km. Geschlecht und Gewicht dienen der Dokumentation, nicht als Fitnessurteil.",color=Muted,fontSize=12.sp)
+            SexPicker(sex){sex=it}
+            Text("Alter und Geschlecht bestimmen deine Vergleichsgruppe für die Zielvorschläge aus der Studie. Ein neues Ziel übernimmst du bewusst über „Laufziel entdecken“.",color=Muted,fontSize=12.sp)
+            ResearchNorms.reference(age.toIntOrNull()?:profile.age,sex)?.let{reference->Text("Deine Studienreferenz: ${Metrics.pace(reference.first)} min/km · n=${reference.second}. Bestpace der Vergleichsgruppe, keine Vorgabe für lockere Läufe.",color=Lime,fontSize=12.sp)}
+            Text("Gewicht ist eine ergänzende Profilangabe. Wir berechnen daraus keine Soll-Pace oder Pulszone: Dafür lernen wir aus deinen Läufen bzw. verwenden gemessene Pulsgrenzen.",color=Muted,fontSize=12.sp)
+            Text("Deine bisherige Pace",fontWeight=FontWeight.SemiBold)
+            Text("Pace ist die Zeit für einen Kilometer. 5:30 bedeutet 5 Minuten und 30 Sekunden pro Kilometer. Kleiner heißt schneller.",color=Muted,fontSize=12.sp)
+            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                FilterChip(selected=paceKnown,onClick={paceKnown=true},label={Text("Pace angeben")})
+                FilterChip(selected=!paceKnown,onClick={paceKnown=false},label={Text("Weiß ich noch nicht")})
+            }
+            if(paceKnown)Field("Bisherige Pace · min/km (z. B. 5:30)",pace,{pace=it},false)
+            else Text("Starte locker nach Sprechgefühl und Puls. Aus drei gut vertragenen Läufen mit Strecke und Belastungsgefühl lernt der Coach dein Ausgangstempo. Bis dahin gibt es keine feste Pace-Vorgabe.",color=Lime,fontSize=12.sp)
         }
         CardBlock{
             Eyebrow("Pulszonen")
@@ -109,14 +133,22 @@ import kotlin.math.*
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){listOf(250,500,1000).forEach{m->FilterChip(selected=cue==m,onClick={cue=m},label={Text("$m m")})}}
             Text("Bei länger erhöhtem Puls kommt ein Hinweis bereits vor der nächsten Distanzansage. Intervallwechsel erfolgen nach Zeit. Ohne frischen Puls fordert der Coach keine Temposteigerung.",color=Muted,fontSize=12.sp,lineHeight=19.sp)
             OutlinedButton(onClick={speech.speak("Laufklar ist bereit. Ein Kilometer. Pace sechs Minuten pro Kilometer. Locker bleiben und in ganzen Sätzen sprechen.")},modifier=Modifier.fillMaxWidth()){Icon(Icons.Outlined.VolumeUp,null);Spacer(Modifier.width(8.dp));Text("Ansage testen")}
+            Text(audioStatus,color=Muted,fontSize=12.sp)
             TextButton(onClick={context.startActivity(Intent("com.android.settings.TTS_SETTINGS"))}){Text("Android-Sprachausgabe öffnen")}
             Text("Benötigt eine installierte deutsche Offline-Stimme. Musik wird für Ansagen kurz abgesenkt, wenn der Player Audiofokus unterstützt.",color=Muted,fontSize=11.sp)
         }
         CardBlock{
-            Eyebrow("Training entwickeln")
-            Text("Planwoche $week / 12",fontSize=22.sp)
-            Slider(value=week.toFloat(),onValueChange={week=it.roundToInt()},valueRange=1f..12f,steps=10)
-            Text("Zwei Läufe sind die Basis; ein dritter ist optional. Erst weiterstellen, wenn du die aktuelle Woche gut verträgst. Kein automatischer Sprung auf mehr Umfang.",color=Muted,fontSize=12.sp)
+            Eyebrow("Dein dauerhaftes Trainingsziel")
+            Field("Zieldistanz · km",goalKm,{goalKm=it})
+            Field("Zielzeit · Minuten",goalMinutes,{goalMinutes=it})
+            Text("Dein Standard: 10 km in 50 Minuten. Das Ziel bleibt bestehen, auch nach Erreichen oder Trainingspausen.",color=Muted,fontSize=12.sp)
+            Text("${frequency} mögliche Lauftage pro Woche",fontWeight=FontWeight.SemiBold)
+            Slider(value=frequency.toFloat(),onValueChange={frequency=it.roundToInt()},valueRange=2f..5f,steps=2)
+            Text("Das ist deine verfügbare Häufigkeit, keine Pflicht. Erholung und zuletzt verträglicher Umfang gehen vor.",color=Muted,fontSize=12.sp)
+            Text("Forschung als Orientierung",fontWeight=FontWeight.SemiBold)
+            Text(ResearchNorms.hint(age.toIntOrNull()?:profile.age,sex),color=Muted,fontSize=12.sp,lineHeight=19.sp)
+            TextButton(onClick={context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://pmc.ncbi.nlm.nih.gov/articles/PMC8304551/")))}){Text("Vergleichsstudie ansehen")}
+            Text("Fitnessforschung verwendet häufig gemessene VO₂peak mit alters- und geschlechtsspezifischen Referenzen (FRIEND, aktualisiert 2022). Eine allgemeine Pflichtzeit für gesunde Menschen lässt sich daraus nicht ableiten. Wir passen den Trainer an deine eigenen Daten an.",color=Muted,fontSize=12.sp,lineHeight=19.sp)
             Toggle("Tempoeinheiten freischalten","Meine Arzt-Rückfrage ist geklärt. Lockere Läufe sind gut verträglich, ich bin beschwerdefrei und möchte kontrollierte Intervalle ergänzen.",ready,{ready=it})
             Text("Höchstens eine Tempoeinheit pro Woche; mindestens 48 Stunden Abstand. Bei Krankheit, Hangover oder ungewöhnlicher Erschöpfung heute keine Tempoeinheit.",color=Muted,fontSize=12.sp)
         }
@@ -133,6 +165,21 @@ import kotlin.math.*
         error?.let{Text(it,color=Peach)}
         FullButton("Profil speichern",Icons.Outlined.Check){draft()?.let(onSave)}
         TextButton(onClick=onPrivacy){Text("Datenschutz & Forschungsgrundlagen")}
+    }
+    goalPicker?.let{draft->GoalPicker(draft,onDismiss={goalPicker=null},onAccept={p->onSave(p);goalPicker=null},useReferenceInitially=resetGoalReference)}
+}
+@Composable fun SexPicker(value:String,onChange:(String)->Unit){
+    var expanded by remember{mutableStateOf(false)}
+    Column(verticalArrangement=Arrangement.spacedBy(6.dp)){
+        Text("Geschlecht",fontWeight=FontWeight.SemiBold)
+        Box{
+            OutlinedButton(onClick={expanded=true},modifier=Modifier.fillMaxWidth()){
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){Text(value);Icon(Icons.Outlined.ArrowDropDown,"Geschlecht auswählen")}
+            }
+            DropdownMenu(expanded=expanded,onDismissRequest={expanded=false}){
+                listOf("Männlich","Weiblich").forEach{choice->DropdownMenuItem(text={Text(choice)},onClick={onChange(choice);expanded=false})}
+            }
+        }
     }
 }
 @Composable fun PrivacyScreen(onBack:()->Unit){
@@ -153,7 +200,7 @@ import kotlin.math.*
             Eyebrow("Was das Coaching kann")
             Text("Pulszonen sind Trainingshilfen. Die App stellt keine Diagnose und kann deine ärztliche Untersuchung nicht ersetzen. Bei Brustschmerz, Ohnmachtsgefühl oder ungewöhnlicher Atemnot das Training beenden und medizinisch abklären lassen.",color=Muted,lineHeight=23.sp)
             Text("Die Formel 208 − 0,7 × Alter schätzt Gruppenmittelwerte. Individuelle Abweichungen können groß sein. Bei 38 Jahren ergibt sie rund 181 bpm, keine persönliche Leistungsgrenze. Die 50–100-%-Einteilung ist eine gewählte Fünf-Zonen-Konvention.",color=Muted,lineHeight=23.sp)
-            Text("Lockere Einheiten haben Vorrang. Der Sprechtest unterstützt die Einschätzung, ist aber keine präzise Schwellenmessung. Studien zu Intensitätsverteilungen unterstützen viel niedrigintensives Training; sie begründen weder einen starren 80/20-Zwang noch einen garantierten 12-Wochen-Erfolg für dich.",color=Muted,lineHeight=23.sp)
+            Text("Lockere Einheiten haben Vorrang. Der Sprechtest unterstützt die Einschätzung, ist aber keine präzise Schwellenmessung. Studien zu Intensitätsverteilungen unterstützen viel niedrigintensives Training; sie begründen weder einen starren 80/20-Zwang noch einen garantierten Zeithorizont für dich.",color=Muted,lineHeight=23.sp)
             Text("Das Coaching verwendet Regeln auf dem Telefon: Median des letzten 15-Sekunden-Pulsfensters, mindestens 3 Werte, kein Puls älter als 10 Sekunden. Nach mindestens 15 Sekunden über dem Zielbereich wird mit mindestens 60 Sekunden Abstand zum Reduzieren geraten. Diese Zeitfenster sind Produktentscheidungen, kein klinisch validierter Algorithmus.",color=Muted,lineHeight=23.sp)
         }
         CardBlock{
@@ -165,6 +212,8 @@ import kotlin.math.*
                 "HERITAGE: Fehler von Altersformeln" to "https://pmc.ncbi.nlm.nih.gov/articles/PMC3935487/",
                 "CDC: Sprechtest & Intensität" to "https://www.cdc.gov/physical-activity-basics/measuring/",
                 "Muñoz et al.: Training bei Freizeitläufern" to "https://pubmed.ncbi.nlm.nih.gov/23752040/",
+                "Laufpace nach Alter und Geschlecht" to "https://pmc.ncbi.nlm.nih.gov/articles/PMC8304551/",
+                "FRIEND: aktualisierte Fitnessreferenzen 2022" to "https://doi.org/10.1016/j.mayocp.2021.08.020",
                 "OpenStreetMap: Kartennutzung" to "https://operations.osmfoundation.org/policies/tiles/"
             ).forEach{(label,url)->TextButton(onClick={link(url)},contentPadding=PaddingValues(0.dp)){Text(label)}}
         }

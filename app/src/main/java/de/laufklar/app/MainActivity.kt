@@ -9,6 +9,7 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
@@ -17,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -33,6 +35,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -54,9 +58,12 @@ val Peach=Color(0xFFFFB18B)
 val ZoneColors=listOf(Color(0xFF6C786E),Color(0xFF82BAE1),Lime,Color(0xFFF7D676),Peach,Color(0xFFEB7D80))
 
 class MainActivity:ComponentActivity(){
-    override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);enableEdgeToEdge()
+    override fun onStart(){super.onStart();Live.sensorOwnership.visible(true,this)}
+    override fun onStop(){Live.sensorOwnership.visible(false,this);if(!Live.sensorOwnership.hasVisiblePreview)Live.sensor.stopScan();super.onStop()}
+    override fun onDestroy(){Live.sensorOwnership.preview(false,this);Live.sensorOwnership.visible(false,this);super.onDestroy()}
+    override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);enableEdgeToEdge(statusBarStyle=SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),navigationBarStyle=SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         val privacy=intent.action=="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE"||intent.action==Intent.ACTION_VIEW_PERMISSION_USAGE
-        setContent{MaterialTheme(colorScheme=darkColorScheme(primary=Lime,onPrimary=Ink,background=Ink,surface=Panel,onSurface=Cream,onBackground=Cream,secondary=Peach,outline=Muted.copy(alpha=.4f))){Laufklar(privacy)}}
+        setContent{MaterialTheme(colorScheme=darkColorScheme(primary=Lime,onPrimary=Ink,background=Ink,surface=Panel,onSurface=Cream,onBackground=Cream,secondary=Peach,secondaryContainer=Color(0xFF33412A),onSecondaryContainer=Lime,primaryContainer=Color(0xFF33412A),onPrimaryContainer=Lime,outline=Muted.copy(alpha=.4f))){Laufklar(privacy)}}
     }
 }
 @Composable fun Laufklar(initialPrivacy:Boolean){
@@ -67,6 +74,15 @@ class MainActivity:ComponentActivity(){
     var privacy by rememberSaveable{mutableStateOf(initialPrivacy)};var sensorDialog by remember{mutableStateOf(false)}
     var notice by remember{mutableStateOf<String?>(null)};var requested by remember{mutableStateOf<(() -> Unit)?>(null)}
     var previousActive by remember{mutableStateOf<String?>(null)}
+    LaunchedEffect(ready,profile.sensorAddress,profile.sensorName){if(ready){
+        Live.sensor.rememberDevice(profile.sensorAddress,profile.sensorName)
+        Live.sensorOwnership.device(profile.sensorAddress)
+    }}
+    val previewWanted=ready&&((tab==0&&active==null&&previousActive==null&&detailId==null&&!privacy)||sensorDialog)
+    DisposableEffect(previewWanted,context){
+        Live.sensorOwnership.preview(previewWanted,context)
+        onDispose{Live.sensorOwnership.preview(false,context)}
+    }
     val permissions=rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){grants->
         val callback=requested;requested=null
         callback?.invoke()
@@ -78,14 +94,15 @@ class MainActivity:ComponentActivity(){
     }
     fun healthConnect(){if(HealthExporter(context).available()) healthPermissions.launch(HealthExporter.basePermissions + if(repo.profile.value.shareRoute)setOf(HealthExporter.routePermission)else emptySet()) else notice="Health Connect ist auf diesem Gerät nicht verfügbar."}
     LaunchedEffect(active?.id,runs.size){if(active!=null)previousActive=active!!.id else if(previousActive!=null){detailId=previousActive;previousActive=null}}
-    fun connectSensor(){request(arrayOf(Manifest.permission.BLUETOOTH_SCAN,Manifest.permission.BLUETOOTH_CONNECT)){sensorDialog=true;Live.sensor.scan()}}
-    fun start(mode:RunMode,workout:Workout){
+    fun connectSensor(){request(arrayOf(Manifest.permission.BLUETOOTH_SCAN,Manifest.permission.BLUETOOTH_CONNECT)){sensorDialog=true;Live.sensorOwnership.reconnect();Live.sensor.scan()}}
+    fun start(mode:RunMode,workout:Workout,readiness:Readiness){
+        if(readiness==Readiness.UNWELL){notice="Heute kein Lauftraining bei Krankheit oder Beschwerden. Dein Ziel bleibt bestehen.";return}
         if(storageError!=null){notice=storageError;return}
         if(workout==Workout.INTERVALS&&runs.any{it.workout==Workout.INTERVALS&&it.started>System.currentTimeMillis()-7*24*3600_000L}){notice="In den letzten 7 Tagen gab es eine Tempoeinheit. Wähle heute einen lockeren Lauf.";return}
         val perms=buildList{add(Manifest.permission.POST_NOTIFICATIONS);if(mode==RunMode.OUTDOOR){add(Manifest.permission.ACCESS_FINE_LOCATION);add(Manifest.permission.ACCESS_COARSE_LOCATION)};if(profile.sensorAddress!=null){add(Manifest.permission.BLUETOOTH_CONNECT);add(Manifest.permission.BLUETOOTH_SCAN)}}.toTypedArray()
         request(perms){
             if(mode==RunMode.OUTDOOR&&context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED)notice="Für Outdoor-Aufzeichnung bitte präzisen Standort erlauben. Laufband ist ohne GPS möglich."
-            else runCatching{context.startForegroundService(Intent(context,RunService::class.java).setAction(RunService.START).putExtra("mode",mode.name).putExtra("workout",workout.name))}.onFailure{notice="Lauf konnte nicht starten: ${it.message}"}
+            else runCatching{context.startForegroundService(Intent(context,RunService::class.java).setAction(RunService.START).putExtra("mode",mode.name).putExtra("workout",workout.name).putExtra("readiness",readiness.name))}.onFailure{notice="Lauf konnte nicht starten: ${it.message}"}
         }
     }
     Scaffold(containerColor=Ink,bottomBar={if(active==null&&detailId==null&&!privacy)NavigationBar(containerColor=Ink,tonalElevation=0.dp){
@@ -107,7 +124,7 @@ class MainActivity:ComponentActivity(){
     }
     if(notice!=null)AlertDialog(onDismissRequest={notice=null},title={Text("Laufklar")},text={Text(notice!!)},confirmButton={TextButton(onClick={notice=null}){Text("Verstanden")}})
     if(sensorDialog)SensorDialog(onDismiss={sensorDialog=false},onSelect={d->
-        scope.launch{repo.setProfile(repo.profile.value.copy(sensorAddress=d.address,sensorName=d.name));Live.sensor.connect(d.address)}
+        scope.launch{repo.setProfile(repo.profile.value.copy(sensorAddress=d.address,sensorName=d.name));Live.sensor.rememberDevice(d.address,d.name);Live.sensorOwnership.choose(d.address)}
     })
 }
 @Composable fun Page(content:@Composable ColumnScope.()->Unit){Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal=24.dp).padding(top=18.dp,bottom=28.dp),verticalArrangement=Arrangement.spacedBy(20.dp),content=content)}
@@ -121,49 +138,88 @@ class MainActivity:ComponentActivity(){
 fun localDate(time:Long)=Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()).toLocalDate()
 fun dateText(time:Long)=Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("EEE, d. MMM · HH:mm",Locale.GERMANY))
 fun weekRuns(runs:List<Run>,offset:Int=0):List<Run>{val end=LocalDate.now().minusDays(offset*7L).plusDays(1);val start=end.minusDays(7);return runs.filter{val d=localDate(it.started);!d.isBefore(start)&&d.isBefore(end)}}
-@Composable fun Home(profile:Profile,runs:List<Run>,onStart:(RunMode,Workout)->Unit,onConnect:()->Unit,onProfile:()->Unit){
+@Composable fun Home(profile:Profile,runs:List<Run>,onStart:(RunMode,Workout,Readiness)->Unit,onConnect:()->Unit,onProfile:()->Unit){
     var mode by rememberSaveable{mutableStateOf(RunMode.OUTDOOR)};var workout by rememberSaveable{mutableStateOf(Workout.EASY)}
+    var readiness by rememberSaveable{mutableStateOf(Readiness.READY)}
     val recent=weekRuns(runs)
-    LaunchedEffect(profile.intensityReady){if(workout !in Training.available(profile))workout=Workout.EASY}
-    Page{
+    val plan=remember(profile,runs,mode,readiness){AdaptiveTrainer.plan(profile,runs,mode,readiness)}
+    LaunchedEffect(plan){workout=plan.suggested}
+    Column(Modifier.fillMaxSize()){
+    Box(Modifier.weight(1f)){Page{
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){Eyebrow("LAUFKLAR",Lime);Icon(Icons.Outlined.GraphicEq,null,tint=Lime)}
         Text("Ruhig starten.\nStärker werden.",fontSize=38.sp,lineHeight=42.sp,fontWeight=FontWeight.SemiBold,letterSpacing=(-1.4).sp)
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp)){
             CardBlock(Modifier.weight(1f)){Eyebrow("Letzte 7 Tage");Metric(Metrics.km(recent.sumOf{it.distance}),"Kilometer",Lime);Text("${recent.size} Läufe",color=Muted,fontSize=12.sp)}
-            CardBlock(Modifier.weight(1f)){Eyebrow("Dein Ziel");Metric("50:00","10 km · 5:00 min/km");Text("Schritt für Schritt",color=Muted,fontSize=12.sp)}
+            CardBlock(Modifier.weight(1f).clickable(onClick=onProfile)){Eyebrow("Dein Ziel");Metric(Metrics.duration(profile.goalKm*profile.goalPace),"${Metrics.km(profile.goalKm*1000)} km · ${Metrics.pace(profile.goalPace.toDouble())} /km");Text("Dauerhaft dein Ziel",color=Muted,fontSize=12.sp)}
         }
         Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
-            Eyebrow("Heute laufen")
             Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){RunMode.entries.forEach{m->FilterChip(selected=mode==m,onClick={mode=m},label={Text(m.label)},leadingIcon={Icon(if(m==RunMode.OUTDOOR)Icons.Outlined.Park else Icons.Outlined.FitnessCenter,null,Modifier.size(17.dp))})}}
-            Training.available(profile).forEach{w->
+            CardBlock{
+                Eyebrow("Dein Trainer · ${plan.focus.label}",Lime)
+                Text(plan.reason,color=Muted,fontSize=13.sp,lineHeight=20.sp)
+                Text("Wie fühlst du dich heute?",fontWeight=FontWeight.SemiBold)
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Readiness.entries.take(2).forEach{r->FilterChip(selected=readiness==r,onClick={readiness=r},label={Text(r.label,fontSize=12.sp)})}}
+                FilterChip(selected=readiness==Readiness.UNWELL,onClick={readiness=Readiness.UNWELL},label={Text(Readiness.UNWELL.label,fontSize=12.sp)})
+            }
+            Eyebrow(if(plan.restRecommended)"Heute ist Erholung empfohlen"else "Heute laufen")
+            Text("Der Coach begleitet jeden Lauf mit Puls- und Tempoansagen. Die Laufart legt fest, was du heute trainierst.",color=Muted,fontSize=13.sp,lineHeight=20.sp)
+            plan.available().forEach{w->
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(if(workout==w)Lime.copy(alpha=.10f)else Panel).clickable{workout=w}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){
-                    RadioButton(selected=workout==w,onClick={workout=w});Spacer(Modifier.width(8.dp));Column(Modifier.weight(1f)){Text(w.label,fontWeight=FontWeight.SemiBold);Text(workoutSubtitle(w,profile),color=Muted,fontSize=12.sp)}
-                    Text("${Training.phases(w,profile.planWeek).sumOf{it.duration}/60}′",color=if(workout==w)Lime else Muted,fontSize=20.sp)
+                    RadioButton(selected=workout==w,onClick={workout=w});Spacer(Modifier.width(8.dp));Column(Modifier.weight(1f)){if(w==plan.suggested&&!plan.restRecommended)Text("Heute empfohlen",color=Lime,fontSize=10.sp);Text(w.label,fontWeight=FontWeight.SemiBold);Text(workoutSubtitle(w,plan),color=Muted,fontSize=12.sp)}
+                    Text("${plan.phases(w).sumOf{it.duration}/60}′",color=if(workout==w)Lime else Muted,fontSize=20.sp)
                 }
             }
+            CardBlock{Text("So läuft „${workout.label}“",fontWeight=FontWeight.SemiBold,color=Lime);Text(workoutExplanation(workout,plan),color=Muted,fontSize=13.sp,lineHeight=21.sp)}
         }
         SensorCard(onConnect)
         if(mode==RunMode.TREADMILL)CardBlock{Text("Dein Laufband gibt das Tempo vor",fontWeight=FontWeight.SemiBold);Text("Während des Laufs km/h eingeben. Ohne Eingabe laufen Zeit und Puls weiter; Pace und Distanz bleiben offen. Die Enddistanz kannst du nachtragen.",color=Muted,fontSize=13.sp)}
         if(profile.estimated)Text("Pulszonen sind noch geschätzt. Mit ${profile.age} Jahren sagt eine Formel nicht, wo deine persönliche Zone 2 liegt. Gemessene Grenzen kannst du im Profil hinterlegen.",color=Muted,fontSize=12.sp,lineHeight=19.sp)
-        FullButton("${mode.label} starten",Icons.Outlined.PlayArrow){onStart(mode,workout)}
         TextButton(onClick=onProfile){Text("Pulszonen & Audio einstellen")}
+    }}
+    Column(Modifier.fillMaxWidth().background(Ink).padding(horizontal=24.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
+        Text("${workout.label} · ${plan.phases(workout).sumOf{it.duration}/60} Minuten",fontSize=12.sp,color=Muted,modifier=Modifier.align(Alignment.CenterHorizontally))
+        FullButton("${mode.label} starten",Icons.Outlined.PlayArrow,enabled=readiness!=Readiness.UNWELL){onStart(mode,workout,readiness)}
+    }
     }
 }
-fun workoutSubtitle(w:Workout,p:Profile)=when(w){Workout.EASY->"Sprechtest · ruhig in Bewegung bleiben";Workout.BASELINE->"10′ aufwärmen + 20′ gleichmäßig locker";Workout.LONG->"Ausdauer aufbauen · Gehpausen erlaubt";Workout.INTERVALS->"Kontrollierte Abschnitte · etwa ${Metrics.pace(Training.targetPace(p).toDouble())} /km"}
+fun workoutSubtitle(w:Workout,p:DailyPlan)=when(w){Workout.EASY->"Grundlage stärken · entspanntes Alltagstraining";Workout.BASELINE->"Vergleichslauf · wird dieselbe Pace leichter?";Workout.LONG->"Länger durchhalten · im lockeren Tempo";Workout.INTERVALS->"Schnelle und lockere Abschnitte im Wechsel"}
+fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
+    Workout.EASY->"${p.easyMinutes} Minuten inklusive lockerem Ein- und Auslaufen. Laufe so, dass du ganze Sätze sprechen kannst. Der Coach meldet sich bei zu hohem Puls. Gehpausen sind jederzeit okay. Das ist deine regelmäßige Grundlage."
+    Workout.BASELINE->"10 Minuten aufwärmen, 20 Minuten gleichmäßig locker laufen, 5 Minuten auslaufen. Wähle eine flache Strecke oder dasselbe Laufband mit gleicher Steigung. Alle 2–4 Wochen wiederholen: Unter „Entwicklung“ siehst du, ob du bei ähnlichem Puls schneller wirst. Laufe dabei so, dass du ganze Sätze sprechen kannst."
+    Workout.LONG->"${p.longMinutes} Minuten im gleichen lockeren Sprechtempo wie beim kurzen Lauf. Du trainierst, länger durchzuhalten; das Tempo muss dafür nicht steigen. Der Coach erhöht die Dauer mit deinem Fortschritt. Gehpausen sind okay."
+    Workout.INTERVALS->"10 Minuten aufwärmen, dann ${p.repetitions} zügige Abschnitte à ${Metrics.duration(p.workSeconds.toDouble())} Minuten mit jeweils 2 Minuten lockerer Erholung; am Ende 10 Minuten auslaufen. Orientierung: ${Metrics.pace(p.targetPace.toDouble())} min/km. Puls und Belastungsgefühl gehen vor Tempo. Der Coach sagt jeden Wechsel an."
+}
 @Composable fun SensorCard(onConnect:()->Unit){
     val status by Live.sensor.status.collectAsStateWithLifecycle();val bpm by Live.bpm.collectAsStateWithLifecycle();var now by remember{mutableLongStateOf(SystemClock.elapsedRealtime())}
     LaunchedEffect(Unit){while(true){now=SystemClock.elapsedRealtime();delay(1000)}}
-    val fresh=bpm?.takeIf{now-it.second in 0..10_000}
-    CardBlock{Row(verticalAlignment=Alignment.CenterVertically){Icon(Icons.Outlined.FavoriteBorder,null,tint=Peach);Spacer(Modifier.width(12.dp));Column(Modifier.weight(1f)){Text("Fitbit Air",fontWeight=FontWeight.SemiBold);Text(status,color=Muted,fontSize=12.sp)};Text(fresh?.first?.toString()?:"—",fontSize=28.sp,color=Peach)};OutlinedButton(onClick=onConnect,modifier=Modifier.fillMaxWidth()){Text("Pulssensor verbinden")}}
+    // The one-second UI tick may precede a newly received Bluetooth sample.
+    val fresh=bpm?.takeIf{maxOf(now,SystemClock.elapsedRealtime())-it.second in 0..10_000}
+    val connected by Live.sensor.connected.collectAsStateWithLifecycle()
+    val displayStatus=if(connected&&fresh==null)"Verbunden · warte auf frischen Puls"else status
+    CardBlock{Row(verticalAlignment=Alignment.CenterVertically){Icon(Icons.Outlined.FavoriteBorder,null,tint=Peach);Spacer(Modifier.width(12.dp));Column(Modifier.weight(1f)){Text("Fitbit Air",fontWeight=FontWeight.SemiBold);Text(displayStatus,color=Muted,fontSize=12.sp)}
+        Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
+            val live=fresh!=null&&connected
+            Box(Modifier.size(9.dp).background(if(live)Color(0xFF62D98B)else Muted.copy(alpha=.35f),CircleShape).semantics{contentDescription=if(live)"Live-Puls aktiv"else "Kein aktueller Live-Puls"})
+            Text(fresh?.first?.toString()?:"—",fontSize=28.sp,color=Peach)
+        }
+    };OutlinedButton(onClick=onConnect,modifier=Modifier.fillMaxWidth()){Text("Pulssensor verbinden")}}
 }
 @Composable fun SensorDialog(onDismiss:()->Unit,onSelect:(SensorDevice)->Unit){
     val devices by Live.sensor.devices.collectAsStateWithLifecycle();val status by Live.sensor.status.collectAsStateWithLifecycle()
+    val saved by Live.sensor.savedDevice.collectAsStateWithLifecycle();val scanStatus by Live.sensor.scanStatus.collectAsStateWithLifecycle()
     DisposableEffect(Unit){onDispose{Live.sensor.stopScan()}}
     AlertDialog(onDismissRequest=onDismiss,title={Text("Fitbit Air verbinden")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
         Text("In Google Health: Verbindungen → Fitbit Air → Herzfrequenz teilen → Starten. Anschließend hier auswählen und die Android-Pairingabfrage bestätigen.")
         Text(status,color=Lime)
-        devices.forEach{d->OutlinedButton(onClick={onSelect(d)},modifier=Modifier.fillMaxWidth()){Text("${d.name} · ${d.address.takeLast(5)}")}}
-        Text("Ein gespeichertes Gerät wird beim nächsten Lauf erneut verbunden. Veraltete Pulswerte steuern das Coaching nicht.",fontSize=12.sp,color=Muted)
+        saved?.let{d->
+            Text("Gespeichert: ${d.name}",fontWeight=FontWeight.SemiBold)
+            OutlinedButton(onClick={onSelect(d)},modifier=Modifier.fillMaxWidth()){Text("Gespeicherten Sensor verbinden")}
+            Text("Dieser Sensor bleibt auswählbar, auch wenn er gerade nicht in der Suche erscheint.",fontSize=12.sp,color=Muted)
+            TextButton(onClick={Live.sensorOwnership.disconnect()}){Text("Sensor freigeben")}
+        }
+        if(scanStatus.isNotBlank())Text(scanStatus,fontSize=12.sp,color=Muted)
+        devices.filter{it.address!=saved?.address}.forEach{d->OutlinedButton(onClick={onSelect(d)},modifier=Modifier.fillMaxWidth()){Text("${d.name} · ${d.address.takeLast(5)}")}}
+        Text("Auf der Laufstartseite verbindet sich dein gespeicherter Sensor automatisch. Nach dem Lauf und außerhalb der App ohne Aufzeichnung wird die Verbindung freigegeben. Veraltete Pulswerte steuern das Coaching nicht.",fontSize=12.sp,color=Muted)
     }},confirmButton={TextButton(onClick=onDismiss){Text("Fertig")}},dismissButton={TextButton(onClick={Live.sensor.scan()}){Text("Erneut suchen")}})
 }
 @Composable fun ActiveScreen(run:Run,profile:Profile,onConnect:()->Unit){
@@ -171,8 +227,8 @@ fun workoutSubtitle(w:Workout,p:Profile)=when(w){Workout.EASY->"Sprechtest · ru
     val message by Live.message.collectAsStateWithLifecycle();val gps by Live.gps.collectAsStateWithLifecycle();val speed by Live.beltSpeed.collectAsStateWithLifecycle();val audio by Live.audioStatus.collectAsStateWithLifecycle()
     var finish by remember{mutableStateOf(false)};var editSpeed by remember{mutableStateOf(false)};var speedInput by remember{mutableStateOf("")}
     var now by remember{mutableLongStateOf(System.currentTimeMillis())};LaunchedEffect(Unit){while(true){now=RunService.instance?.timeNow()?:System.currentTimeMillis();delay(1000)}}
-    val hr=Metrics.freshHr(run.pulses,now)
-    val phases=Training.phases(run.workout,profile.planWeek);val phaseIndex=Training.phaseAt(phases,run.activeSeconds)
+    val hr=Metrics.freshHr(run.pulses,maxOf(now,RunService.instance?.timeNow()?:System.currentTimeMillis()))
+    val phases=run.phases.ifEmpty{Training.fallback(run.workout)};val phaseIndex=Training.phaseAt(phases,run.activeSeconds)
     val phase=phases.getOrNull(phaseIndex)
     val previous=phases.take(phaseIndex).sumOf{it.duration}
     fun command(action:String){context.startService(Intent(context,RunService::class.java).setAction(action))}
@@ -253,6 +309,7 @@ fun workoutSubtitle(w:Workout,p:Profile)=when(w){Workout.EASY->"Sprechtest · ru
             }
             if(run.estimatedZones)Text("Zonen beruhen auf einer Altersformel, nicht auf einem Leistungstest.",color=Muted,fontSize=11.sp)
         }
+        CardBlock{Eyebrow("Trainer-Notiz");Text(run.coachReason.ifBlank{"Freier Lauf"},color=Muted,fontSize=13.sp);Text("${run.phases.sumOf{it.duration}/60} Minuten geplant · ${if(run.workout==Workout.INTERVALS)"Zielpace ${Metrics.pace(run.targetPace.toDouble())}"else "locker nach Sprechtest"}",color=Muted,fontSize=12.sp)}
         CardBlock{Eyebrow("Wie hat es sich angefühlt?");Text(run.rpe?.let{"Belastung $it / 10"}?:"Noch keine Einschätzung");if(run.note.isNotBlank())Text(run.note,color=Muted);OutlinedButton(onClick={edit=true},modifier=Modifier.fillMaxWidth()){Text(if(run.mode==RunMode.TREADMILL)"Distanz & Belastung ergänzen"else "Belastung & Notiz ergänzen")}}
         CardBlock{
             Eyebrow("Health Connect");Text(run.exportStatus,color=Muted,fontSize=13.sp)

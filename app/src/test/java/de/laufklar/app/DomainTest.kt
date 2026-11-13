@@ -11,6 +11,21 @@ class DomainTest {
     @Test fun bleSupportsEightAndSixteenBitPackets(){assertEquals(123,HeartRatePacket.parse(byteArrayOf(0,123)));assertEquals(200,HeartRatePacket.parse(byteArrayOf(1,200.toByte(),0)))}
     @Test fun bleRejectsLostSkinContactTruncationAndNonsense(){assertNull(HeartRatePacket.parse(byteArrayOf(4,120)));assertNull(HeartRatePacket.parse(byteArrayOf(1,100)));assertNull(HeartRatePacket.parse(byteArrayOf(0,0)));assertEquals(120,HeartRatePacket.parse(byteArrayOf(6,120)))}
     @Test fun freshHeartRateNeedsEnoughDataAndRejectsOldValues(){val p=listOf(Pulse(1000,1.0,110),Pulse(2000,2.0,180),Pulse(3000,3.0,112));assertEquals(112,Metrics.freshHr(p,4000));assertNull(Metrics.freshHr(p,14000));assertNull(Metrics.freshHr(p.take(2),3000));assertNull(Metrics.freshHr(p,0))}
+    @Test fun startDoesNotAnnouncePulseInitializationButLaterMissingDataIsReported(){
+        val first=Coach().update(run(seconds=0.0,meters=0.0),Profile(),0)!!
+        assertFalse(first.contains("Puls",ignoreCase=true));assertTrue(first.contains("locker"))
+        val later=Coach().update(run(seconds=30.0,meters=0.0),Profile(),30_000)!!
+        assertTrue(later.contains("Kein verlässlicher Live-Puls"))
+    }
+    @Test fun paceInputUsesMinutesAndSecondsWithoutGuessingUnits(){
+        assertEquals(330,Metrics.parsePace("5:30"));assertEquals(345,Metrics.parsePace(" 05:45 "));assertEquals(1200,Metrics.parsePace("20:00"))
+        listOf("330","5.5","5:60","5:3","0:00","20:01","").forEach{assertNull(it,Metrics.parsePace(it))}
+    }
+    @Test fun unknownPaceSurvivesStorageAndLegacyProfilesKeepTheirPace(){
+        val p=Profile(usualPace=null);assertNull(p.validate());assertEquals(p,Codec.profile(Codec.profile(p)))
+        assertEquals(345,Codec.profile(org.json.JSONObject().put("pace",345)).usualPace)
+        assertEquals(345,Codec.profile(org.json.JSONObject()).usualPace)
+    }
     @Test fun missingHrNeverAsksToSpeedUp(){val s=Coach().guidance(null,Profile(intensityReady=true),true,450.0);assertTrue(s.contains("keine Temposteigerung"))}
     @Test fun easyLowHrDoesNotForceSpeedUp(){val s=Coach().guidance(90,Profile(),false,500.0);assertTrue(s.contains("nicht hochjagen"))}
     @Test fun highHeartRateOverridesPaceGoal(){val s=Coach().guidance(175,Profile(intensityReady=true),true,400.0);assertTrue(s.startsWith("Tempo reduzieren"))}
@@ -18,8 +33,8 @@ class DomainTest {
     @Test fun sustainedHighHrProducesEarlyWarning(){val c=Coach();val p=Profile()
         fun high(sec:Int)=run(seconds=sec.toDouble(),pulses=(sec-4..sec).map{Pulse(it*1000L,it.toDouble(),140)})
         c.update(high(100),p,100_000);assertNull(c.update(high(110),p,110_000));assertTrue(c.update(high(116),p,116_000)!!.contains("reduzieren"));assertNull(c.update(high(120),p,120_000))}
-    @Test fun intervalsAreOptInAndHaveWarmupCooldown(){assertFalse(Training.available(Profile()).contains(Workout.INTERVALS));val p=Training.phases(Workout.INTERVALS,5);assertFalse(p.first().intense);assertFalse(p.last().intense);assertEquals(5,p.count{it.intense});assertEquals(1,Training.phaseAt(p,600.0))}
-    @Test fun goalPaceCannotOvershootFiveMinutes(){assertEquals(300,Training.targetPace(Profile(planWeek=12)));assertEquals(300,Training.targetPace(Profile(planWeek=12,usualPace=310)))}
+    @Test fun intervalsAreOptInAndHaveWarmupCooldown(){assertFalse(Training.available(Profile()).contains(Workout.INTERVALS));val p=Training.fallback(Workout.INTERVALS);assertFalse(p.first().intense);assertFalse(p.last().intense);assertEquals(4,p.count{it.intense});assertEquals(1,Training.phaseAt(p,600.0))}
+
     @Test fun poorGpsAndTeleportAreRejected(){val p=TrackPoint(0,0.0,52.0,13.0,5.0,0);assertFalse(Metrics.acceptedGps(p,p.copy(time=1000,lat=53.0)));assertFalse(Metrics.acceptedGps(null,p.copy(accuracy=30.0)));assertTrue(Metrics.acceptedGps(p,p.copy(time=1000,lat=52.00002)))}
     @Test fun missingPaceStaysUnknown(){assertEquals("—",Metrics.pace(null));assertNull(Metrics.recentPace(listOf(Motion(0,0.0,0.0,null),Motion(1000,1.0,100.0,2.0)),1.0));assertEquals("5:00",Metrics.pace(299.6))}
     @Test fun paceUsesRecentDistanceAndTime(){val data=listOf(Motion(0,0.0,0.0,3.0),Motion(60000,60.0,200.0,3.0));assertEquals(300.0,Metrics.recentPace(data,60.0)!!,.001);assertNull(Metrics.recentPace(data,80.0))}

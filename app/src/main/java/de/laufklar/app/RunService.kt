@@ -30,20 +30,25 @@ object Live {
     val saving=MutableStateFlow(false)
     val audioStatus=MutableStateFlow("Offline-Stimme wird vorbereitet")
     lateinit var sensor:HeartRateSensor
-    fun initialize(context:android.content.Context){sensor=HeartRateSensor(context){bpm.value=it to SystemClock.elapsedRealtime();RunService.instance?.pulse(it)}}
+    lateinit var sensorOwnership:SensorOwnership
+    fun initialize(context:android.content.Context){
+        sensor=HeartRateSensor(context,sample={bpm.value=it to SystemClock.elapsedRealtime();RunService.instance?.pulse(it)},signalLost={bpm.value=null})
+        sensorOwnership=SensorOwnership(connect={sensor.connect(it)},release={sensor.close()})
+    }
 }
 class AudioCoach(context:android.content.Context) {
     private val manager=context.getSystemService(AudioManager::class.java)
     private val attributes=AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
     private val focus=AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK).setAudioAttributes(attributes).setOnAudioFocusChangeListener{}.build()
     private var ready=false
+    private var pending:String?=null
     private var tts:TextToSpeech?=null
     init{
         tts=TextToSpeech(context){status->
             val engine=tts
             if(status==TextToSpeech.SUCCESS&&engine!=null){
                 val voice=engine.voices?.firstOrNull{it.locale.language=="de"&&!it.isNetworkConnectionRequired&&!it.features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)}
-                if(voice!=null){engine.voice=voice;engine.setAudioAttributes(attributes);engine.setSpeechRate(.95f);ready=true;Live.audioStatus.value="Deutsche Offline-Stimme bereit"}
+                if(voice!=null){engine.voice=voice;engine.setAudioAttributes(attributes);engine.setSpeechRate(.95f);ready=true;Live.audioStatus.value="Deutsche Offline-Stimme bereit";pending?.let{pending=null;speak(it)}}
                 else Live.audioStatus.value="Deutsche Offline-Stimme fehlt. In Android › Sprachausgabe installieren."
             }else Live.audioStatus.value="Sprachausgabe nicht verfügbar"
         }
@@ -53,7 +58,7 @@ class AudioCoach(context:android.content.Context) {
             @Deprecated("Android callback") override fun onError(id:String?){manager.abandonAudioFocusRequest(focus)}
         })
     }
-    fun speak(text:String){if(!ready)return;if(manager.requestAudioFocus(focus)==AudioManager.AUDIOFOCUS_REQUEST_GRANTED){tts?.speak(text,TextToSpeech.QUEUE_FLUSH,null,"coach-${SystemClock.elapsedRealtime()}")}}
+    fun speak(text:String){if(!ready){pending=text;return};if(manager.requestAudioFocus(focus)==AudioManager.AUDIOFOCUS_REQUEST_GRANTED){tts?.speak(text.replace(Regex("(\\d{1,2}):(\\d{2})")){"${it.groupValues[1]} Minuten ${it.groupValues[2]} Sekunden pro Kilometer"},TextToSpeech.QUEUE_FLUSH,null,"coach-${SystemClock.elapsedRealtime()}")}}
     fun close(){tts?.stop();tts?.shutdown();manager.abandonAudioFocusRequest(focus)}
 }
 class RunService:Service(),LocationListener {
@@ -103,12 +108,16 @@ class RunService:Service(),LocationListener {
         try{startForeground(71,notification(),type)}catch(e:Exception){Live.message.value="Aufzeichnung konnte nicht starten. Standort-/Bluetooth-Berechtigung prüfen.";stopSelf();return}
         profile=repo().profile.value
         var workout=Workout.valueOf(intent.getStringExtra("workout")?:Workout.EASY.name)
-        if(workout==Workout.INTERVALS&&!profile.intensityReady)workout=Workout.EASY
+        val readiness=runCatching { Readiness.valueOf(intent.getStringExtra("readiness")?:"READY") }.getOrDefault(Readiness.READY)
+        val plan=AdaptiveTrainer.plan(profile,repo().runs.value,mode,readiness)
+        if(readiness==Readiness.UNWELL){Live.message.value=plan.reason;stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();return}
+        if(workout !in plan.available())workout=Workout.EASY
         startTick=SystemClock.elapsedRealtime();lastTick=startTick;startWall=System.currentTimeMillis();lastCheckpoint=0
-        Live.run.value=Run(started=startWall,mode=mode,workout=workout,zoneBounds=profile.bounds,estimatedZones=profile.estimated)
+        Live.sensor.rememberDevice(profile.sensorAddress,profile.sensorName)
+        Live.sensorOwnership.device(profile.sensorAddress);Live.sensorOwnership.recording(true)
+        Live.run.value=Run(started=startWall,mode=mode,workout=workout,zoneBounds=profile.bounds,estimatedZones=profile.estimated,phases=plan.phases(workout),targetPace=plan.targetPace,coachReason=plan.reason,readiness=readiness.name)
         Live.paused.value=false;Live.saving.value=false;finishing=false;coach.reset(0.0,profile.cueMeters)
         wake=getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"laufklar:run").apply{acquire(6*60*60*1000L)}
-        profile.sensorAddress?.let{if(!Live.sensor.connected.value)Live.sensor.connect(it)}
         if(mode==RunMode.OUTDOOR)startGps()
         timer=scope.launch{
             while(isActive){
@@ -182,10 +191,11 @@ class RunService:Service(),LocationListener {
     }
     fun speed(kmh:Double){if(kmh.isFinite()&&kmh in 0.0..25.0){tick();Live.beltSpeed.value=kmh}}
     private fun pause(){if(Live.run.value==null||Live.paused.value||finishing)return;tick();Live.paused.value=true;pauseWall=wall();segment++;previousPoint=null;Live.message.value="Pausiert · Zeit und Strecke stehen";scope.launch{runCatching{repo().checkpoint(Live.run.value!!,wall())}};getSystemService(NotificationManager::class.java).notify(71,notification())}
-    private fun resume(){if(Live.run.value==null||!Live.paused.value||finishing)return;val r=Live.run.value!!;pauseWall?.let{Live.run.value=r.copy(pauses=r.pauses+PauseSpan(it,wall()))};pauseWall=null;lastTick=SystemClock.elapsedRealtime();Live.paused.value=false;Live.message.value="Weiter geht’s. Locker anlaufen.";getSystemService(NotificationManager::class.java).notify(71,notification())}
+    private fun resume(){if(Live.run.value==null||!Live.paused.value||finishing)return;Live.sensorOwnership.recording(true);val r=Live.run.value!!;pauseWall?.let{Live.run.value=r.copy(pauses=r.pauses+PauseSpan(it,wall()))};pauseWall=null;lastTick=SystemClock.elapsedRealtime();Live.paused.value=false;Live.message.value="Weiter geht’s. Locker anlaufen.";getSystemService(NotificationManager::class.java).notify(71,notification())}
     private fun finish(){
         if(finishing||Live.run.value==null)return
         tick();finishing=true;Live.saving.value=true;timer?.cancel();locations.removeUpdates(this)
+        Live.sensorOwnership.recording(false)
         val old=Live.run.value!!;val end=wall().coerceAtLeast(old.started+1)
         val run=old.copy(ended=end,pauses=old.pauses+listOfNotNull(pauseWall?.let{PauseSpan(it,end)}))
         scope.launch{
@@ -198,5 +208,5 @@ class RunService:Service(),LocationListener {
             finally{Live.saving.value=false}
         }
     }
-    override fun onDestroy(){timer?.cancel();scope.cancel();locations.removeUpdates(this);audio.close();if(wake?.isHeld==true)wake?.release();instance=null;super.onDestroy()}
+    override fun onDestroy(){Live.sensorOwnership.recording(false);timer?.cancel();scope.cancel();locations.removeUpdates(this);audio.close();if(wake?.isHeld==true)wake?.release();instance=null;super.onDestroy()}
 }

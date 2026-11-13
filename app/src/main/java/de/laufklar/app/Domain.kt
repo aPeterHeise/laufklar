@@ -5,13 +5,14 @@ import java.util.UUID
 import kotlin.math.*
 
 enum class RunMode(val label: String) { OUTDOOR("Draußen"), TREADMILL("Laufband") }
-enum class Workout(val label: String) { EASY("Locker laufen"), BASELINE("Standortbestimmung"), LONG("Länger locker"), INTERVALS("Tempo aufbauen") }
+enum class Workout(val label: String) { EASY("Locker laufen"), BASELINE("Fortschritt vergleichen"), LONG("Länger locker"), INTERVALS("Tempo aufbauen") }
 data class Profile(
     val age: Int = 38, val weight: Double = 83.0, val sex: String = "Männlich",
     val measuredMax: Int? = null, val restingHr: Int? = null, val reserveZones: Boolean = false,
     val customBounds: List<Int>? = null, val audio: Boolean = true, val cueMeters: Int = 500,
     val healthExport: Boolean = false, val shareRoute: Boolean = false, val onlineMaps: Boolean = true,
-    val intensityReady: Boolean = false, val planWeek: Int = 1, val usualPace: Int = 345,
+    val intensityReady: Boolean = false, val usualPace: Int? = 345,
+    val goalKm: Double = 10.0, val goalPace: Int = 300, val runsPerWeek: Int = 3,
     val sensorAddress: String? = null, val sensorName: String? = null
 ) {
     val maxHr: Int get() = measuredMax ?: (208 - .7 * age).roundToInt()
@@ -30,9 +31,13 @@ data class Profile(
         !weight.isFinite() || weight !in 30.0..300.0 -> "Gewicht: 30 bis 300 kg."
         measuredMax != null && measuredMax !in 100..230 -> "Gemessener Maximalpuls: 100 bis 230."
         restingHr != null && restingHr !in 30..100 -> "Ruhepuls: 30 bis 100."
-        reserveZones && restingHr == null -> "Für die Herzfrequenzreserve fehlt dein Ruhepuls."
+        customBounds == null && reserveZones && restingHr == null -> "Für die Herzfrequenzreserve fehlt dein Ruhepuls."
+        customBounds == null && reserveZones && restingHr != null && restingHr >= maxHr -> "Der Ruhepuls muss unter dem Maximalpuls liegen."
         customBounds != null && (customBounds.size != 6 || customBounds.any { it !in 40..230 } || customBounds.zipWithNext().any { it.first >= it.second }) -> "Sechs aufsteigende Zonengrenzen zwischen 40 und 230 eingeben."
-        usualPace !in 240..900 -> "Ausgangspace: 240 bis 900 Sekunden/km."
+        usualPace != null && usualPace !in 180..1200 -> "Bisherige Pace: 3:00 bis 20:00 min/km."
+        !goalKm.isFinite() || goalKm !in 1.0..42.2 -> "Zieldistanz: 1 bis 42,2 km."
+        goalPace !in 180..1200 -> "Zielpace: 3:00 bis 20:00 min/km."
+        runsPerWeek !in 2..5 -> "Trainingstage: 2 bis 5 pro Woche."
         else -> null
     }
 }
@@ -48,7 +53,8 @@ data class Run(
     val motion: List<Motion> = emptyList(), val pauses: List<PauseSpan> = emptyList(),
     val zoneBounds: List<Int>, val estimatedZones: Boolean = true,
     val rpe: Int? = null, val note: String = "", val exportStatus: String = "Noch nicht geteilt",
-    val revision: Long = 1, val exportedRevision: Long = 0, val recovered: Boolean = false
+    val revision: Long = 1, val exportedRevision: Long = 0, val recovered: Boolean = false,
+    val phases: List<Phase> = emptyList(), val targetPace: Int = 345, val coachReason: String = "", val readiness: String = "READY"
 ) {
     val distance get() = correctedMeters ?: meters
     val pace get() = if (distance >= 20 && activeSeconds > 0) activeSeconds * 1000 / distance else null
@@ -56,14 +62,13 @@ data class Run(
 }
 data class Phase(val name: String, val duration: Int, val intense: Boolean = false)
 object Training {
-    fun phases(workout: Workout, week: Int): List<Phase> = when (workout) {
+    fun fallback(workout: Workout): List<Phase> = when (workout) {
         Workout.EASY -> listOf(Phase("Locker ankommen", 300), Phase("Ruhig und gesprächig", 1200), Phase("Locker auslaufen", 300))
         Workout.BASELINE -> listOf(Phase("10 Minuten aufwärmen", 600), Phase("20 Minuten gleichmäßig locker", 1200), Phase("Locker auslaufen", 300))
-        Workout.LONG -> listOf(Phase("Locker ankommen", 300), Phase("Ruhig und gesprächig", (25 + (week - 1) * 2).coerceAtMost(45) * 60), Phase("Locker auslaufen", 300))
+        Workout.LONG -> listOf(Phase("Locker ankommen", 300), Phase("Ruhig und gesprächig", 1500), Phase("Locker auslaufen", 300))
         Workout.INTERVALS -> buildList {
             add(Phase("10 Minuten aufwärmen", 600))
-            val repeats = if (week < 5) 4 else if (week < 9) 5 else 6
-            repeat(repeats) { n -> add(Phase("Tempo ${n + 1} von $repeats", if (week < 5) 120 else 180, true)); add(Phase("Locker erholen", 120)) }
+            repeat(4) { n -> add(Phase("Tempo ${n + 1} von 4", 120, true)); add(Phase("Locker erholen", 120)) }
             add(Phase("Locker auslaufen", 600))
         }
     }
@@ -72,10 +77,13 @@ object Training {
         phases.forEachIndexed { i, p -> end += p.duration; if (seconds < end) return i }
         return phases.size
     }
-    fun targetPace(profile: Profile) = (profile.usualPace - (profile.usualPace - 300).coerceAtLeast(0) * (profile.planWeek - 1) / 11.0).roundToInt().coerceAtLeast(300)
     fun available(profile: Profile) = Workout.entries.filter { it != Workout.INTERVALS || profile.intensityReady }
 }
 object Metrics {
+    fun parsePace(value: String): Int? {
+        val match = Regex("^(\\d{1,2}):([0-5]\\d)$").matchEntire(value.trim()) ?: return null
+        return (match.groupValues[1].toInt() * 60 + match.groupValues[2].toInt()).takeIf { it in 180..1200 }
+    }
     fun pace(secondsPerKm: Double?): String {
         if (secondsPerKm == null || !secondsPerKm.isFinite() || secondsPerKm <= 0) return "—"
         val sec = secondsPerKm.roundToInt(); return "%d:%02d".format(Locale.GERMANY, sec / 60, sec % 60)
@@ -154,13 +162,13 @@ class Coach {
     private var aboveSince: Double? = null
     private var lastAlert = -1000.0
     fun reset(distance: Double, every: Int) { nextDistance = (floor(distance / every) + 1) * every }
-    fun guidance(hr: Int?, profile: Profile, intense: Boolean, pace: Double?): String {
+    fun guidance(hr: Int?, profile: Profile, intense: Boolean, pace: Double?, targetPace: Int? = profile.usualPace): String {
         if (hr == null) return "Kein verlässlicher Live-Puls. Bleib locker; keine Temposteigerung."
         val upper = if (intense) profile.bounds[4] else profile.bounds[2]
         return when {
             hr >= upper -> "Tempo reduzieren. Bei Bedarf gehen, bis du wieder bequem sprechen kannst."
             intense -> {
-                val target = Training.targetPace(profile).toDouble()
+                val target = targetPace?.toDouble() ?: return "Deine Ausgangspace ist noch offen. Bleib locker und in ganzen Sätzen sprechend."
                 when { pace == null -> "Kontrolliert zügig, kein Sprint."
                     pace < target - 10 -> "Etwas langsamer. Zielpace ${Metrics.pace(target)}."
                     pace > target + 15 -> "Wenn es sich kontrolliert anfühlt, leicht Richtung ${Metrics.pace(target)} beschleunigen."
@@ -171,11 +179,12 @@ class Coach {
         }
     }
     fun update(run: Run, profile: Profile, now: Long): String? {
-        val phases = Training.phases(run.workout, profile.planWeek)
+        val phases = run.phases.ifEmpty { Training.fallback(run.workout) }
         val index = Training.phaseAt(phases, run.activeSeconds)
         val phase = phases.getOrNull(index)
         val hr = Metrics.freshHr(run.pulses, now)
-        val advice = guidance(hr, profile, phase?.intense == true, Metrics.recentPace(run.motion, run.activeSeconds))
+        val advice = if (hr == null && run.activeSeconds < 15) "Starte locker nach Sprechgefühl."
+            else guidance(hr, profile, phase?.intense == true, Metrics.recentPace(run.motion, run.activeSeconds), run.targetPace)
         val above = hr != null && hr >= (if (phase?.intense == true) profile.bounds[4] else profile.bounds[2])
         if (above) { if (aboveSince == null) aboveSince = run.activeSeconds } else aboveSince = null
         if (aboveSince != null && run.activeSeconds - aboveSince!! >= 15 && run.activeSeconds - lastAlert >= 60) {
