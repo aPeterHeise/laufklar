@@ -6,6 +6,9 @@
 
 # Android / Local Config
 local.properties
+google-services.json
+gha-creds-*.json
+__pycache__/
 captures/
 .cxx/
 .externalNativeBuild/
@@ -28,3 +31,19 @@ dist/
 .DS_Store
 Thumbs.db
 *.log
+
+# Local Firebase authentication and credentials
+.firebase/
+.firebase-testers
+.env
+.env.*
+!.env.example
+*service-account*.json
+*service_account*.json
+*firebase-adminsdk*.json
+*credentials*.json
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx

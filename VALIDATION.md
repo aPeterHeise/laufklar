@@ -2,6 +2,8 @@
 
 13. November 2026 · Paket `de.laufklar.app` · Versionscode 7.
 
+- Firebase App Distribution: v0.1.6 unverändert aus dem GitHub-Release manuell hochgeladen und erfolgreich an den ausdrücklich freigegebenen Tester verteilt (`5f82flfumt73g`). Paket, Version, Signatur und SHA-256 zuvor geprüft; Firebase bestätigt 0.1.6 / Build 7. Vier Tests für das manuelle Release-Werkzeug bestanden. Zukünftige Uploads erfolgen ausschließlich auf ausdrückliche Anweisung, ohne GitHub-Automation oder neue IAM-Zugänge.
+
 - 95 JVM-Tests bestanden. Neue Regressionen prüfen die 2-Sekunden-Pause und 1-Sekunden-Fortsetzung, ungültige/veraltete/doppelte GPS-Messungen, das Ersetzen und Verwerfen überholter Sprachmeldungen sowie Tagesform bei Routenvergleich und Lernen des Ausgangstempos.
 - Alle 19 Android-Instrumentierungstests im isolierten API-36-Emulator bestanden (128 Sekunden). Neu geprüft: unterer Gesundheitshinweis mit weiterhin aktivem Startknopf, tatsächlicher Laufstart mit `UNWELL`, Auto-Pause und Fortsetzung im Aufzeichnungsdienst, verspätete/gebündelte GPS-Fixes sowie Bestand einer manuellen Pause. Tests für Speicherung, Health Connect, Karte und vollständigen Cooldown blieben grün.
 - `testDebugUnitTest`, `lintDebug`, `assembleDebug`, `assembleDebugAndroidTest`, `assembleRelease`: erfolgreich. Android-Lint: 0 Fehler, 10 bestehende Warnungen.

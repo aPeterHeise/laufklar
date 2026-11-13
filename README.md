@@ -16,6 +16,8 @@ Ein **grüner Punkt vor dem Puls** zeigt an, dass die Verbindung steht und ein h
 
 Nach dem Lauf bleibt der Bluetooth-Client für eine mögliche 60-Sekunden-Cooldown-Messung aktiv und wird danach freigegeben. Beim Verlassen der App ohne Aufzeichnung oder Cooldown wird er ebenfalls freigegeben. Während einer laufenden oder pausierten Aufzeichnung bleibt die Verbindung auch bei ausgeschaltetem Bildschirm bestehen. Beim erneuten Öffnen der Laufstartseite wird wieder verbunden. Die Herzfrequenz-Freigabe am Fitbit bzw. in Google Health muss weiterhin aktiv sein.
 
+Firebase App Distribution wird [manuell mit einem Release-Befehl](docs/RELEASING.md) bedient und nur auf ausdrückliche Anweisung aktualisiert. GitHub-Releases lösen keinen automatischen Firebase-Upload aus.
+
 ## Ein dauerhaftes Ziel
 
 **Profil → Laufziel entdecken** öffnet den Zielassistenten. Alter und Studien-Vergleichsgruppe auswählen, 5 km / 10 km / Halbmarathon wählen und den Tempofaktor einstellen. **Als dauerhaftes Laufziel übernehmen** speichert es. Beliebige Distanzen von 1 bis 42,2 km und Zielzeiten können auch direkt im Profil eingegeben werden.
