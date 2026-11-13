@@ -1,3 +1,21 @@
+# Aktueller Prüfstand: 0.1.5
+
+13. November 2026 · Paket `de.laufklar.app` · Versionscode 6.
+
+- 85 JVM-Tests bestanden: bestehende Aufzeichnungs-/Speicherlogik, Auto-Pause, Cooldown, neue offene Laufphasen, begrenzte Pulsinterventionen, Entlastungsrückmeldung, fehlende Messwerte, gleichgerichtete Routenvergleiche, Gegenrichtung, Reststrecke entlang der Route, Aufgaben bei Pausen und persistierte Coach-Ereignisse.
+- 16 Android-Instrumentierungstests im isolierten Android-16/API-36-Emulator bestanden. Darunter eine vollständige 60-Sekunden-Cooldown-Messung einschließlich Activity-Neuerstellung, sofortiger lokaler Sicherung, korrektem Score und unveränderter Laufdauer sowie die offene Live-Ansicht nach 30 Minuten. Bestehende Tests für Health Connect, Laufabschluss, Speicherung, Navigation und Karte bestanden ebenfalls.
+- Die zuletzt ergänzte Vorrangregel „aktive Entlastung bzw. fehlender Puls verhindert Tempoaufforderung beim Intervallwechsel“ ist zusätzlich per JVM-Regressionstest abgesichert. Danach JVM-Tests, Lint und Release-Build erneut erfolgreich; die vollständige Gerätesuite wurde davor ausgeführt.
+- `testDebugUnitTest`, `lintDebug`, `assembleDebug`, `assembleDebugAndroidTest`, `assembleRelease`: erfolgreich. Android-Lint: 0 Fehler, 10 bestehende Warnungen.
+- Signierte, optimierte Release-APK erzeugt und mit `apksigner verify` geprüft. Zertifikat stimmt mit der zuvor auf dem Pixel installierten v0.1.4 überein; Update erhält App-Speicher und Keystore.
+- v0.1.5 als Update auf dem Pixel 11 Pro installiert und geöffnet; Versionscode 6 geprüft. Vorhandener Lauf und Ziel blieben sichtbar. Startansicht zeigt „Meine Runde · Offen“.
+- Ein vom Nutzer freigegebener Lauf wurde ausschließlich lokal exportiert und im neuen Coach wiedergegeben. Rohdaten und Replay bleiben außerhalb des Repositorys und des GitHub-Releases.
+
+Noch im echten Lauf zu prüfen: Ansagetiming mit AirPods und Musik, Auto-Pause unter realen GPS-Bedingungen, Wiedererkennung derselben Strecke mit neuen GPS-Fixes und persönliche Wirkung der Coach-Aufgaben. Ein Replay ersetzt diesen Praxistest nicht.
+
+Die beiden Coaching-Szenarien und die aktuell umgesetzten Regeln stehen in [COACHING.md](COACHING.md).
+
+---
+
 # Validierung der persönlichen Vorschau
 
 Stand: 13. November 2026. Paket `de.laufklar.app`, Version 0.1.4. Das ausgelieferte APK liegt in `dist/laufklar-preview.apk`.

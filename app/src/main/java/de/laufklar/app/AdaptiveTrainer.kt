@@ -11,11 +11,13 @@ data class DailyPlan(
     val startingPaceKnown:Boolean = true
 ){
     fun phases(workout:Workout):List<Phase> = when(workout){
-        Workout.EASY,Workout.LONG->{val minutes=if(workout==Workout.EASY)easyMinutes else longMinutes;listOf(Phase("Locker ankommen",300),Phase("Ruhig und gesprächig",(minutes-10).coerceAtLeast(5)*60),Phase("Locker auslaufen",300))}
+        Workout.EASY,Workout.LONG->listOf(Phase("Ankommen",300),Phase(if(workout==Workout.LONG)"Ausdauer sammeln"else "Deine Runde",0))
         Workout.BASELINE->Training.fallback(workout)
         Workout.INTERVALS->buildList{add(Phase("10 Minuten aufwärmen",600));repeat(repetitions){n->add(Phase("Tempo ${n+1} von $repetitions",workSeconds,true));add(Phase("Locker erholen",120))};add(Phase("Locker auslaufen",600))}
     }
-    fun available()=Workout.entries.filter{it!=Workout.INTERVALS||qualityAllowed}.filter{it!=Workout.BASELINE||focus !in setOf(TrainingFocus.RETURN,TrainingFocus.RECOVER)}
+    fun available()=Workout.entries.filter{it!=Workout.BASELINE&&(it!=Workout.INTERVALS||qualityAllowed)}
+    fun openEnded(workout:Workout)=workout==Workout.EASY||workout==Workout.LONG
+    fun durationLabel(workout:Workout)=when(workout){Workout.EASY->"Offen";Workout.LONG->"ca. $longMinutes′";else->"${phases(workout).sumOf{it.duration}/60}′"}
 }
 object AdaptiveTrainer {
     const val DAY=86_400_000L
@@ -46,6 +48,7 @@ object AdaptiveTrainer {
         val latest=all.firstOrNull()
         val poor=recentAll.take(3).count{(it.rpe?:0)>=8}
         val achieved=recent.any{reached(it,profile)}
+        val distanceKnown=(profile.distanceExperienceKm?:0.0)>=profile.goalKm||relevant.any{it.distance>=profile.goalKm*1000}
         val recentReturn = all.zipWithNext().withIndex().firstOrNull { (_, pair) -> pair.first.started - pair.second.ended!! >= 14*DAY }?.index?.let { it < 2 } == true
         val returning=all.isNotEmpty()&&(gap>=14||recentReturn)
         val overloaded=poor>=2||readiness!=Readiness.READY
@@ -82,7 +85,8 @@ object AdaptiveTrainer {
         }else if((recentQuality?.rpe?:0)>=8){target=previousPace+10;reps=(oldReps-1).coerceAtLeast(3)}
         target=target.coerceAtLeast(profile.goalPace)
         if(focus==TrainingFocus.RETURN||focus==TrainingFocus.RECOVER){target=max(target,startingPace?:target);reps=3;work=120}
-        val suggested=when{rest||focus in setOf(TrainingFocus.RETURN,TrainingFocus.RECOVER,TrainingFocus.LEARN)->Workout.EASY;qualityAllowed->Workout.INTERVALS;week.none{it.workout==Workout.LONG}->Workout.LONG;else->Workout.EASY}
+        // The everyday entry point stays a familiar, open run. Structured sessions remain optional.
+        val suggested=Workout.EASY
         val reason=when{
             readiness==Readiness.UNWELL->"Heute kein Lauftraining. Krankheit oder Beschwerden haben Vorrang vor dem Ziel."
             readiness==Readiness.TIRED->"Du meldest Müdigkeit oder Hangover. Heute keine Intervalle; Erholung oder höchstens sehr locker."
@@ -91,11 +95,13 @@ object AdaptiveTrainer {
             loadHigh->"Deine letzten sieben Tage liegen über deinem bisherigen Umfang. Heute nicht weiter steigern."
             rest->"Deine letzten Läufe sprechen heute für Erholung. Der nächste Reiz wirkt besser, wenn du erholt bist."
             achieved->"Dein Ziel wurde in den letzten 35 Tagen für ${mode.label.lowercase()} protokolliert. Jetzt erhalten: regelmäßig locker, gelegentlich kontrolliertes Tempo."
-            startingPace==null->"Du musst deine Pace noch nicht kennen. Laufe nach Sprechgefühl und Puls. Aus drei gut vertragenen Läufen mit Strecke und Belastungsgefühl lerne ich dein Ausgangstempo; bis dahin gibt es kein festes Tempoziel."
-            recent.size<3->"Ich lerne deine aktuelle Belastbarkeit kennen. Ergänze nach jedem Lauf dein Belastungsgefühl, damit die Empfehlungen wachsen können."
+            distanceKnown&&recent.size<3->"Du kannst die Zieldistanz bereits laufen. Jetzt lernen wir dein Tempo und deine Belastung kennen, um über ${Metrics.spokenKm(profile.goalKm*1000)} Kilometer schneller zu werden. Deine Runde hat kein festes Zeitlimit."
+            startingPace==null->"Deine Runde, dein Tempo. Ich lerne aus deinen Läufen und deinem Belastungsgefühl. Vergleiche entstehen automatisch auf passenden Abschnitten; ein Tempoziel kommt erst mit genügend Daten."
+            recent.size<3->"Ich begleite deine gewohnte Runde ohne festes Zeitlimit. Nach dem Ankommen probieren wir einen gleichmäßigen Kilometer. Ergänze danach dein Belastungsgefühl, damit ich dich besser kennenlerne."
             successful&&qualityAllowed->"Die letzte Tempoeinheit war vollständig, kontrolliert und gut dokumentiert. Heute ist ein kleiner nächster Schritt möglich."
             qualityAllowed->"Du läufst regelmäßig und hattest Abstand zur letzten Belastung. Eine kontrollierte Tempoeinheit kann heute passen."
-            else->"Ausdauer festigen. Der nächste längere Lauf richtet sich nach deinem zuletzt vertragenen Umfang."
+            distanceKnown->"Die Zieldistanz ist dir vertraut. Gleichmäßige Runden und passende Tempoeinheiten helfen beim nächsten Schritt zum Zeitziel. Deine bisherigen Läufe bestimmen die Aufgaben."
+            else->"Deine Runde bleibt offen. Für den Weg zur Zieldistanz kannst du „Länger laufen“ wählen: etwa $long Minuten, angepasst an deinen zuletzt vertragenen Umfang."
         }
         return DailyPlan(focus,reason,suggested,rest,qualityAllowed,target,easy,long,reps,work,achieved,readiness,startingPace!=null)
     }

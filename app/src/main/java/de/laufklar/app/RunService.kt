@@ -116,7 +116,7 @@ class RunService:Service(),LocationListener {
     private var previousFix:TrackPoint?=null
     private val autoPause=AutoPauseDetector()
     private var lastCheckpoint=0L
-    private val coach=Coach()
+    private var coach=Coach()
     private var finishing=false
     private var stopCooldown=false
     override fun onBind(intent:Intent?)=null
@@ -162,7 +162,9 @@ class RunService:Service(),LocationListener {
         startTick=SystemClock.elapsedRealtime();lastTick=startTick;startWall=System.currentTimeMillis();lastCheckpoint=0
         Live.sensor.rememberDevice(profile.sensorAddress,profile.sensorName)
         Live.sensorOwnership.device(profile.sensorAddress);Live.sensorOwnership.recording(true)
-        Live.run.value=Run(started=startWall,mode=mode,workout=workout,zoneBounds=profile.bounds,estimatedZones=profile.estimated,phases=plan.phases(workout),targetPace=plan.targetPace,coachReason=plan.reason,readiness=readiness.name)
+        coach=Coach(repo().runs.value)
+        Live.run.value=Run(started=startWall,mode=mode,workout=workout,zoneBounds=profile.bounds,estimatedZones=profile.estimated,phases=plan.phases(workout),targetPace=plan.targetPace,coachReason=plan.reason,readiness=readiness.name,
+            openEnded=plan.openEnded(workout),plannedSeconds=if(workout==Workout.LONG)plan.longMinutes*60 else if(workout==Workout.EASY)null else plan.phases(workout).sumOf{it.duration})
         Live.paused.value=false;Live.autoPaused.value=false;Live.cooldownSeconds.value=null;Live.saving.value=false;Live.reviewing.value=false;Live.beltSpeed.value=0.0;finishing=false;stopCooldown=false;autoPause.reset();previousFix=null;coach.reset(0.0,profile.cueMeters)
         wake=getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"laufklar:run").apply{acquire((6*60*60+120)*1000L)}
         if(mode==RunMode.OUTDOOR)startGps()
@@ -194,8 +196,9 @@ class RunService:Service(),LocationListener {
             val speed=Live.beltSpeed.value/3.6
             r=r.copy(meters=r.meters+dt*speed,motion=r.motion+Motion(wall(),r.activeSeconds,r.meters+dt*speed,speed.takeIf{it>0}))
         }
-        Live.run.value=r
-        coach.update(r,profile,wall())?.let{Live.message.value=it;if(profile.audio)audio.speak(it)}
+        val cue=coach.update(r,profile,wall())
+        Live.run.value=coach.snapshot(r)
+        cue?.let{Live.message.value=it;if(profile.audio)audio.speak(it)}
     }
     @SuppressLint("MissingPermission")
     private fun startGps(){
@@ -301,7 +304,7 @@ class RunService:Service(),LocationListener {
             Live.message.value="Bitte eine Laufbanddistanz zwischen 0,01 und 200 km eingeben.";return
         }
         tick();finishing=true;Live.saving.value=true;timer?.cancel();locations.removeUpdates(this);audio.stop();autoPause.reset()
-        val old=Live.run.value!!;val end=(old.ended?:reviewEnd?:wall()).coerceAtLeast(old.started+1)
+        val old=if(Live.run.value!!.ended==null)coach.finish(Live.run.value!!)else Live.run.value!!;val end=(old.ended?:reviewEnd?:wall()).coerceAtLeast(old.started+1)
         val rest=repo().profile.value.restingHr
         val currentBpm=Live.bpm.value?.takeIf{SystemClock.elapsedRealtime()-it.second in 0..5_000}?.first
         val cooldown=old.cooldown?:if(!discard&&old.ended==null&&currentBpm!=null&&(rest==null||currentBpm>rest))Cooldown(wall(),currentBpm,rest)else null

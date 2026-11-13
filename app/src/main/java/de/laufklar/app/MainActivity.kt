@@ -163,11 +163,11 @@ fun weekRuns(runs:List<Run>,offset:Int=0):List<Run>{val end=LocalDate.now().minu
                 FilterChip(selected=readiness==Readiness.UNWELL,onClick={readiness=Readiness.UNWELL},label={Text(Readiness.UNWELL.label,fontSize=12.sp)})
             }
             Eyebrow(if(plan.restRecommended)"Heute ist Erholung empfohlen"else "Heute laufen")
-            Text("Der Coach begleitet jeden Lauf mit Puls- und Tempoansagen. Die Laufart legt fest, was du heute trainierst.",color=Muted,fontSize=13.sp,lineHeight=20.sp)
+            Text("Dein Coach begleitet die Runde mit einer kleinen Aufgabe und passenden Vergleichen. Du entscheidest, wann du fertig bist.",color=Muted,fontSize=13.sp,lineHeight=20.sp)
             plan.available().forEach{w->
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(if(workout==w)Lime.copy(alpha=.10f)else Panel).clickable{workout=w}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){
                     RadioButton(selected=workout==w,onClick={workout=w});Spacer(Modifier.width(8.dp));Column(Modifier.weight(1f)){if(w==plan.suggested&&!plan.restRecommended)Text("Heute empfohlen",color=Lime,fontSize=10.sp);Text(w.label,fontWeight=FontWeight.SemiBold);Text(workoutSubtitle(w,plan),color=Muted,fontSize=12.sp)}
-                    Text("${plan.phases(w).sumOf{it.duration}/60}′",color=if(workout==w)Lime else Muted,fontSize=20.sp)
+                    Text(plan.durationLabel(w),color=if(workout==w)Lime else Muted,fontSize=20.sp)
                 }
             }
             CardBlock{Text("So läuft „${workout.label}“",fontWeight=FontWeight.SemiBold,color=Lime);Text(workoutExplanation(workout,plan),color=Muted,fontSize=13.sp,lineHeight=21.sp)}
@@ -178,16 +178,16 @@ fun weekRuns(runs:List<Run>,offset:Int=0):List<Run>{val end=LocalDate.now().minu
         TextButton(onClick=onProfile){Text("Pulszonen & Audio einstellen")}
     }}
     Column(Modifier.fillMaxWidth().background(Ink).padding(horizontal=24.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
-        Text("${workout.label} · ${plan.phases(workout).sumOf{it.duration}/60} Minuten",fontSize=12.sp,color=Muted,modifier=Modifier.align(Alignment.CenterHorizontally))
+        Text("${workout.label} · ${plan.durationLabel(workout)}",fontSize=12.sp,color=Muted,modifier=Modifier.align(Alignment.CenterHorizontally))
         FullButton("${mode.label} starten",Icons.Outlined.PlayArrow,enabled=readiness!=Readiness.UNWELL){onStart(mode,workout,readiness)}
     }
     }
 }
-fun workoutSubtitle(w:Workout,p:DailyPlan)=when(w){Workout.EASY->"Grundlage stärken · entspanntes Alltagstraining";Workout.BASELINE->"Vergleichslauf · wird dieselbe Pace leichter?";Workout.LONG->"Länger durchhalten · im lockeren Tempo";Workout.INTERVALS->"Schnelle und lockere Abschnitte im Wechsel"}
+fun workoutSubtitle(w:Workout,p:DailyPlan)=when(w){Workout.EASY->"Deine Strecke · kleine Aufgabe · automatische Vergleiche";Workout.BASELINE->"Vergleichslauf · wird dieselbe Pace leichter?";Workout.LONG->"Runde verlängern · Dauer als Orientierung";Workout.INTERVALS->"Schnelle und lockere Abschnitte im Wechsel"}
 fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
-    Workout.EASY->"${p.easyMinutes} Minuten inklusive lockerem Ein- und Auslaufen. Laufe so, dass du ganze Sätze sprechen kannst. Der Coach meldet sich bei zu hohem Puls. Gehpausen sind jederzeit okay. Das ist deine regelmäßige Grundlage."
+    Workout.EASY->"Fünf Minuten ankommen, dann einen Kilometer möglichst gleichmäßig laufen. Deine Runde bleibt offen. Der Coach erkennt passende Streckenabschnitte wieder, erklärt wichtige Anpassungen und meldet echte kleine Erfolge. Bei steigender Belastung wird die Aufgabe ruhiger."
     Workout.BASELINE->"10 Minuten aufwärmen, 20 Minuten gleichmäßig locker laufen, 5 Minuten auslaufen. Wähle eine flache Strecke oder dasselbe Laufband mit gleicher Steigung. Alle 2–4 Wochen wiederholen: Unter „Entwicklung“ siehst du, ob du bei ähnlichem Puls schneller wirst. Laufe dabei so, dass du ganze Sätze sprechen kannst."
-    Workout.LONG->"${p.longMinutes} Minuten im gleichen lockeren Sprechtempo wie beim kurzen Lauf. Du trainierst, länger durchzuhalten; das Tempo muss dafür nicht steigen. Der Coach erhöht die Dauer mit deinem Fortschritt. Gehpausen sind okay."
+    Workout.LONG->"Etwa ${p.longMinutes} Minuten als Vorschlag, passend zu deinen bisherigen Läufen. Plane dafür eine Erweiterung deiner Runde. Du entscheidest über das Ende; Zeit und Strecke laufen weiter, auch wenn der Vorschlag erreicht ist. Heute zählt Umfang, nicht Tempo."
     Workout.INTERVALS->"10 Minuten aufwärmen, dann ${p.repetitions} zügige Abschnitte à ${Metrics.duration(p.workSeconds.toDouble())} Minuten mit jeweils 2 Minuten lockerer Erholung; am Ende 10 Minuten auslaufen. Orientierung: ${Metrics.pace(p.targetPace.toDouble())} min/km. Puls und Belastungsgefühl gehen vor Tempo. Der Coach sagt jeden Wechsel an."
 }
 @Composable fun SensorCard(onConnect:()->Unit){
@@ -241,8 +241,8 @@ fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
         Column{Text(Metrics.km(run.meters),fontSize=84.sp,fontWeight=FontWeight.Medium,letterSpacing=(-4).sp);Text(if(run.mode==RunMode.TREADMILL)"Kilometer · aus km/h geschätzt" else "Kilometer",color=Muted)}
         Row(Modifier.fillMaxWidth()){Stat(Metrics.pace(Metrics.recentPace(run.motion,run.activeSeconds)),"min/km · letzte 60 s");Stat(Metrics.duration(run.activeSeconds),"aktive Zeit");Stat(hr?.toString()?:"—","Puls · bpm",Peach)}
         CardBlock{
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Eyebrow(phase?.name?:"Training abgeschlossen",Lime);Text(phase?.let{Metrics.duration((previous+it.duration-run.activeSeconds).coerceAtLeast(0.0))}?:"✓",color=Lime)}
-            if(phase!=null)LinearProgressIndicator(progress={((run.activeSeconds-previous)/phase.duration).toFloat().coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth(),color=Lime,trackColor=Ink)
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Eyebrow(phase?.name?:"Training abgeschlossen",Lime);Text(phase?.let{if(it.duration==0)"Offen"else Metrics.duration((previous+it.duration-run.activeSeconds).coerceAtLeast(0.0))}?:"✓",color=Lime)}
+            if(phase!=null&&phase.duration>0)LinearProgressIndicator(progress={((run.activeSeconds-previous)/phase.duration).toFloat().coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth(),color=Lime,trackColor=Ink)
             Text(message,fontSize=18.sp,lineHeight=26.sp)
             if(hr==null)Text("Kein frischer, stabiler Puls · keine Aufforderung zur Temposteigerung",color=Peach,fontSize=12.sp)
             else Text("Zone ${profile.zone(hr)} · ${if(profile.estimated)"geschätzte Grenzen"else "deine Grenzen"}",color=Muted,fontSize=12.sp)
@@ -399,7 +399,16 @@ fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
             if(run.estimatedZones)Text("Zonen beruhen auf einer Altersformel, nicht auf einem Leistungstest.",color=Muted,fontSize=11.sp)
         }
         run.cooldown?.let{CooldownResult(it)}
-        CardBlock{Eyebrow("Trainer-Notiz");Text(run.coachReason.ifBlank{"Freier Lauf"},color=Muted,fontSize=13.sp);Text("${run.phases.sumOf{it.duration}/60} Minuten geplant · ${if(run.workout==Workout.INTERVALS)"Zielpace ${Metrics.pace(run.targetPace.toDouble())}"else "locker nach Sprechtest"}",color=Muted,fontSize=12.sp)}
+        CardBlock{
+            Eyebrow("Trainer-Notiz")
+            Text(run.coachReason.ifBlank{"Freier Lauf"},color=Muted,fontSize=13.sp)
+            if(run.coachMission.isNotBlank())Text(run.coachMission,color=Lime,fontSize=14.sp)
+            if(run.coachOutcome.isNotBlank())Text(run.coachOutcome,color=Muted,fontSize=13.sp)
+            Text(if(run.openEnded)"Offene Runde · du bestimmst das Ende"else "${(run.plannedSeconds?:run.phases.sumOf{it.duration})/60} Minuten geplant",color=Muted,fontSize=12.sp)
+            run.coachEvents.filter{it.kind in setOf(CueKind.EFFORT,CueKind.RECOVERY,CueKind.PROGRESS)}.takeLast(3).forEach{
+                Text("${Metrics.duration(it.elapsed)} · ${it.text}",color=Muted,fontSize=12.sp)
+            }
+        }
         CardBlock{Eyebrow("Wie hat es sich angefühlt?");Text(run.rpe?.let{"Belastung $it / 10"}?:"Noch keine Einschätzung");if(run.note.isNotBlank())Text(run.note,color=Muted);OutlinedButton(onClick={edit=true},modifier=Modifier.fillMaxWidth()){Text(if(run.mode==RunMode.TREADMILL)"Distanz & Belastung ergänzen"else "Belastung & Notiz ergänzen")}}
         CardBlock{
             Eyebrow("Health Connect");Text(run.exportStatus,color=Muted,fontSize=13.sp)

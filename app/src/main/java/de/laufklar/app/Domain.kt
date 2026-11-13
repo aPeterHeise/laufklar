@@ -5,7 +5,7 @@ import java.util.UUID
 import kotlin.math.*
 
 enum class RunMode(val label: String) { OUTDOOR("Draußen"), TREADMILL("Laufband") }
-enum class Workout(val label: String) { EASY("Locker laufen"), BASELINE("Fortschritt vergleichen"), LONG("Länger locker"), INTERVALS("Tempo aufbauen") }
+enum class Workout(val label: String) { EASY("Meine Runde"), BASELINE("Vergleichslauf"), LONG("Länger laufen"), INTERVALS("Tempo aufbauen") }
 data class Profile(
     val age: Int = 38, val weight: Double = 83.0, val sex: String = "Männlich",
     val measuredMax: Int? = null, val restingHr: Int? = null, val reserveZones: Boolean = false,
@@ -13,7 +13,8 @@ data class Profile(
     val healthExport: Boolean = true, val shareRoute: Boolean = false, val onlineMaps: Boolean = true,
     val intensityReady: Boolean = false, val usualPace: Int? = 345,
     val goalKm: Double = 10.0, val goalPace: Int = 300, val runsPerWeek: Int = 3,
-    val sensorAddress: String? = null, val sensorName: String? = null, val autoPause: Boolean = true
+    val sensorAddress: String? = null, val sensorName: String? = null, val autoPause: Boolean = true,
+    val distanceExperienceKm: Double? = null
 ) {
     val maxHr: Int get() = measuredMax ?: (208 - .7 * age).roundToInt()
     val bounds: List<Int> get() = customBounds ?: (5..10).map { p ->
@@ -38,6 +39,7 @@ data class Profile(
         !goalKm.isFinite() || goalKm !in 1.0..42.2 -> "Zieldistanz: 1 bis 42,2 km."
         goalPace !in 180..1200 -> "Zielpace: 3:00 bis 20:00 min/km."
         runsPerWeek !in 2..5 -> "Trainingstage: 2 bis 5 pro Woche."
+        distanceExperienceKm != null && (!distanceExperienceKm.isFinite() || distanceExperienceKm !in 1.0..100.0) -> "Bereits gelaufene Distanz: 1 bis 100 km."
         else -> null
     }
 }
@@ -55,7 +57,10 @@ data class Run(
     val rpe: Int? = null, val note: String = "", val exportStatus: String = "Noch nicht geteilt",
     val revision: Long = 1, val exportedRevision: Long = 0, val recovered: Boolean = false,
     val phases: List<Phase> = emptyList(), val targetPace: Int = 345, val coachReason: String = "", val readiness: String = "READY",
-    val cooldown: Cooldown? = null
+    val cooldown: Cooldown? = null,
+    val openEnded: Boolean = false, val plannedSeconds: Int? = null,
+    val coachMission: String = "", val coachOutcome: String = "", val referenceRunId: String? = null,
+    val coachEvents: List<CoachEvent> = emptyList()
 ) {
     val distance get() = correctedMeters ?: meters
     val pace get() = if (distance >= 20 && activeSeconds > 0) activeSeconds * 1000 / distance else null
@@ -75,7 +80,7 @@ object Training {
     }
     fun phaseAt(phases: List<Phase>, seconds: Double): Int {
         var end = 0
-        phases.forEachIndexed { i, p -> end += p.duration; if (seconds < end) return i }
+        phases.forEachIndexed { i, p -> if(p.duration==0)return i;end += p.duration; if (seconds < end) return i }
         return phases.size
     }
     fun available(profile: Profile) = Workout.entries.filter { it != Workout.INTERVALS || profile.intensityReady }
@@ -157,55 +162,5 @@ object HeartRatePacket {
         if (wide && bytes.size < 3) return null
         val bpm = (bytes[1].toInt() and 255) + if (wide) ((bytes[2].toInt() and 255) shl 8) else 0
         return bpm.takeIf { it in 30..240 }
-    }
-}
-class Coach {
-    private var nextDistance = 500.0
-    private var previousPhase = -1
-    private var aboveSince: Double? = null
-    private var lastAlert = -1000.0
-    fun reset(distance: Double, every: Int) { nextDistance = (floor(distance / every) + 1) * every }
-    fun guidance(hr: Int?, profile: Profile, intense: Boolean, pace: Double?, targetPace: Int? = profile.usualPace): String {
-        if (hr == null) return "Kein verlässlicher Live-Puls. Bleib locker; keine Temposteigerung."
-        val upper = if (intense) profile.bounds[4] else profile.bounds[2]
-        return when {
-            hr >= upper -> "Tempo reduzieren. Bei Bedarf gehen, bis du wieder bequem sprechen kannst."
-            intense -> {
-                val target = targetPace?.toDouble() ?: return "Deine Ausgangspace ist noch offen. Bleib locker und in ganzen Sätzen sprechend."
-                when { pace == null -> "Kontrolliert zügig, kein Sprint."
-                    pace < target - 10 -> "Etwas langsamer. Zielpace ${Metrics.pace(target)}."
-                    pace > target + 15 -> "Wenn es sich kontrolliert anfühlt, leicht Richtung ${Metrics.pace(target)} beschleunigen."
-                    else -> "Tempo passt. Kontrolliert weiterlaufen." }
-            }
-            hr < profile.bounds[1] -> "Ruhig weiter. Du musst den Puls nicht hochjagen."
-            else -> "Gut so. Locker bleiben und in ganzen Sätzen sprechen."
-        }
-    }
-    fun update(run: Run, profile: Profile, now: Long): String? {
-        val phases = run.phases.ifEmpty { Training.fallback(run.workout) }
-        val index = Training.phaseAt(phases, run.activeSeconds)
-        val phase = phases.getOrNull(index)
-        val hr = Metrics.freshHr(run.pulses, now)
-        val advice = if (hr == null && run.activeSeconds < 15) "Starte locker nach Sprechgefühl."
-            else guidance(hr, profile, phase?.intense == true, Metrics.recentPace(run.motion, run.activeSeconds), run.targetPace)
-        val above = hr != null && hr >= (if (phase?.intense == true) profile.bounds[4] else profile.bounds[2])
-        if (above) { if (aboveSince == null) aboveSince = run.activeSeconds } else aboveSince = null
-        if (aboveSince != null && run.activeSeconds - aboveSince!! >= 15 && run.activeSeconds - lastAlert >= 60) {
-            lastAlert = run.activeSeconds; return "Puls $hr. $advice"
-        }
-        if (index != previousPhase) {
-            previousPhase = index
-            return if (phase == null) "Trainingsteil abgeschlossen. Laufe locker aus oder beende deinen Lauf." else "${phase.name}. ${phase.duration / 60} Minuten. $advice"
-        }
-        if (run.meters >= nextDistance) {
-            val milestone = floor(run.meters / profile.cueMeters) * profile.cueMeters
-            reset(run.meters, profile.cueMeters)
-            val pace = Metrics.recentPace(run.motion, run.activeSeconds)
-            val paceText = if (pace == null) "Pace derzeit nicht verlässlich." else {
-                val sec = pace.roundToInt(); "Pace ${sec / 60} Minuten ${sec % 60} Sekunden pro Kilometer."
-            }
-            return "${Metrics.spokenKm(milestone)} Kilometer. $paceText ${hr?.let { "Puls $it." } ?: ""} $advice"
-        }
-        return null
     }
 }

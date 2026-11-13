@@ -14,8 +14,9 @@ class DomainTest {
     @Test fun startDoesNotAnnouncePulseInitializationButLaterMissingDataIsReported(){
         val first=Coach().update(run(seconds=0.0,meters=0.0),Profile(),0)!!
         assertFalse(first.contains("Puls",ignoreCase=true));assertTrue(first.contains("locker"))
-        val later=Coach().update(run(seconds=30.0,meters=0.0),Profile(),30_000)!!
-        assertTrue(later.contains("Kein verlässlicher Live-Puls"))
+        val coach=Coach();coach.update(run(seconds=0.0,meters=0.0),Profile(),0)
+        val later=coach.update(run(seconds=200.0,meters=500.0),Profile(),200_000)!!
+        assertTrue(later.contains("Kein frischer Live-Puls"))
     }
     @Test fun paceInputUsesMinutesAndSecondsWithoutGuessingUnits(){
         assertEquals(330,Metrics.parsePace("5:30"));assertEquals(345,Metrics.parsePace(" 05:45 "));assertEquals(1200,Metrics.parsePace("20:00"))
@@ -29,10 +30,10 @@ class DomainTest {
     @Test fun missingHrNeverAsksToSpeedUp(){val s=Coach().guidance(null,Profile(intensityReady=true),true,450.0);assertTrue(s.contains("keine Temposteigerung"))}
     @Test fun easyLowHrDoesNotForceSpeedUp(){val s=Coach().guidance(90,Profile(),false,500.0);assertTrue(s.contains("nicht hochjagen"))}
     @Test fun highHeartRateOverridesPaceGoal(){val s=Coach().guidance(175,Profile(intensityReady=true),true,400.0);assertTrue(s.startsWith("Tempo reduzieren"))}
-    @Test fun distanceCuesDoNotBurstWhenSeveralThresholdsAreCrossed(){val c=Coach();val p=Profile();c.update(run(),p,100_000);assertNotNull(c.update(run(meters=1600.0),p,100_000));assertNull(c.update(run(meters=1601.0),p,100_000))}
-    @Test fun sustainedHighHrProducesEarlyWarning(){val c=Coach();val p=Profile()
+    @Test fun distanceCuesDoNotBurstWhenSeveralThresholdsAreCrossed(){val c=Coach();val p=Profile();c.update(run(),p,100_000);assertNotNull(c.update(run(seconds=130.0,meters=1600.0),p,130_000));assertNull(c.update(run(seconds=160.0,meters=1601.0),p,160_000))}
+    @Test fun sustainedHighHrProducesEarlyWarning(){val c=Coach();val p=Profile(measuredMax=190)
         fun high(sec:Int)=run(seconds=sec.toDouble(),pulses=(sec-4..sec).map{Pulse(it*1000L,it.toDouble(),140)})
-        c.update(high(100),p,100_000);assertNull(c.update(high(110),p,110_000));assertTrue(c.update(high(116),p,116_000)!!.contains("reduzieren"));assertNull(c.update(high(120),p,120_000))}
+        c.update(high(100),p,100_000);(101..130).forEach{assertNull(c.update(high(it),p,it*1000L))};assertTrue(c.update(high(132),p,132_000)!!.contains("heraus"));assertNull(c.update(high(140),p,140_000))}
     @Test fun intervalsAreOptInAndHaveWarmupCooldown(){assertFalse(Training.available(Profile()).contains(Workout.INTERVALS));val p=Training.fallback(Workout.INTERVALS);assertFalse(p.first().intense);assertFalse(p.last().intense);assertEquals(4,p.count{it.intense});assertEquals(1,Training.phaseAt(p,600.0))}
 
     @Test fun poorGpsAndTeleportAreRejected(){val p=TrackPoint(0,0.0,52.0,13.0,5.0,0);assertFalse(Metrics.acceptedGps(p,p.copy(time=1000,lat=53.0)));assertFalse(Metrics.acceptedGps(null,p.copy(accuracy=30.0)));assertTrue(Metrics.acceptedGps(p,p.copy(time=1000,lat=52.00002)))}

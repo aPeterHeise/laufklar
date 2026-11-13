@@ -63,19 +63,20 @@ class RunTrackingTest {
         val coach = Coach()
         val run = Run(started = 0, mode = RunMode.OUTDOOR, workout = Workout.EASY, zoneBounds = bounds)
         coach.update(run, Profile(), 0)
-        assertTrue(coach.update(run.copy(meters = 2507.0), Profile(), 1_000)!!.startsWith("2,5 Kilometer."))
-        assertTrue(coach.update(run.copy(meters = 3004.0), Profile(), 2_000)!!.startsWith("3 Kilometer."))
+        assertTrue(coach.update(run.copy(meters = 2507.0, activeSeconds=20.0), Profile(), 20_000)!!.startsWith("2,5 Kilometer."))
+        assertTrue(coach.update(run.copy(meters = 3004.0, activeSeconds=40.0), Profile(), 40_000)!!.startsWith("3 Kilometer."))
     }
 
-    @Test fun heartRateAlertDoesNotConsumePendingDistanceCue() {
+    @Test fun heartRateAlertCombinesDistanceWithoutRepeatingTheAdvice() {
         val coach = Coach()
         fun run(seconds: Int, meters: Double) = Run(started = 0, mode = RunMode.OUTDOOR, workout = Workout.EASY,
             zoneBounds = bounds, meters = meters, activeSeconds = seconds.toDouble(),
-            pulses = (seconds-4..seconds).map { Pulse(it*1000L, it.toDouble(), 160) })
+            pulses = (seconds-4..seconds).map { Pulse(it*1000L, it.toDouble(), 170) })
         coach.update(run(100, 490.0), Profile(), 100_000)
-        assertTrue(coach.update(run(116, 501.0), Profile(), 116_000)!!.startsWith("Puls"))
-        assertTrue(coach.update(run(117, 503.0), Profile(), 117_000)!!.startsWith("0,5 Kilometer."))
-        assertNull(coach.update(run(118, 506.0), Profile(), 118_000))
+        (101..130).forEach{assertNull(coach.update(run(it,490.0),Profile(),it*1000L))}
+        val cue=coach.update(run(132, 501.0), Profile(), 132_000)!!
+        assertTrue(cue.startsWith("0,5 Kilometer."));assertTrue(cue.contains("Puls"))
+        assertNull(coach.update(run(160, 506.0), Profile(), 160_000))
     }
 
     @Test fun routeUsesRecordedZonesAndKeepsBoundaryConnected() {

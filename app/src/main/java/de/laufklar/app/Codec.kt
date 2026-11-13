@@ -9,6 +9,7 @@ object Codec {
         put("reserve", p.reserveZones); put("bounds", p.customBounds?.let { JSONArray(it) }); put("audio", p.audio); put("cue", p.cueMeters)
         put("health", p.healthExport); put("route", p.shareRoute); put("maps", p.onlineMaps); put("ready", p.intensityReady)
         put("autoHealth", p.healthExport); put("autoPause", p.autoPause)
+        put("distanceExperienceKm",p.distanceExperienceKm)
         put("goalKm", p.goalKm); put("goalPace", p.goalPace); put("frequency", p.runsPerWeek); put("pace", p.usualPace ?: JSONObject.NULL); put("address", p.sensorAddress); put("sensor", p.sensorName)
     }
     fun profile(j: JSONObject) = Profile(
@@ -17,7 +18,7 @@ object Codec {
         reserveZones=j.optBoolean("reserve"), customBounds=j.optJSONArray("bounds")?.let { a -> List(a.length()) { a.getInt(it) } },
         // The old health flag was opt-in. Automatic export now defaults on, including existing profiles.
         audio=j.optBoolean("audio",true), cueMeters=j.optInt("cue",500).coerceIn(100,2000), healthExport=j.optBoolean("autoHealth",true), autoPause=j.optBoolean("autoPause",true),
-        shareRoute=j.optBoolean("route"), onlineMaps=j.optBoolean("maps",true), intensityReady=j.optBoolean("ready"),
+        shareRoute=j.optBoolean("route"), onlineMaps=j.optBoolean("maps",true), intensityReady=j.optBoolean("ready"),distanceExperienceKm=if(j.has("distanceExperienceKm"))j.getDouble("distanceExperienceKm")else null,
         goalKm=j.optDouble("goalKm",10.0), goalPace=j.optInt("goalPace",300), runsPerWeek=j.optInt("frequency",3), usualPace=if(j.has("pace")&&j.isNull("pace"))null else j.optInt("pace",345), sensorAddress=j.optString("address").takeIf{it.isNotBlank()}, sensorName=j.optString("sensor").takeIf{it.isNotBlank()}
     )
     fun run(r: Run) = JSONObject().apply {
@@ -29,6 +30,8 @@ object Codec {
         put("pauses",JSONArray(r.pauses.map{JSONArray(listOf(it.from,it.until))}))
         put("phases",JSONArray(r.phases.map{JSONArray(listOf(it.name,it.duration,it.intense))}));put("targetPace",r.targetPace);put("reason",r.coachReason);put("readiness",r.readiness)
         put("rpe",r.rpe); put("note",r.note); put("export",r.exportStatus); put("revision",r.revision); put("exportedRevision",r.exportedRevision); put("recovered",r.recovered)
+        put("openEnded",r.openEnded);put("plannedSeconds",r.plannedSeconds);put("coachMission",r.coachMission);put("coachOutcome",r.coachOutcome);put("referenceRunId",r.referenceRunId)
+        put("coachEvents",JSONArray(r.coachEvents.map{JSONArray(listOf(it.elapsed,it.kind.name,it.text))}))
         r.cooldown?.let { c -> put("cooldown",JSONObject().apply {
             put("start",c.started);put("end",c.ended);put("startBpm",c.startBpm);put("rest",c.restingHr);put("state",c.state.name)
             put("pulses",JSONArray(c.pulses.map { JSONArray(listOf(it.time,it.bpm)) }))
@@ -43,6 +46,9 @@ object Codec {
         points=array(j,"points"){TrackPoint(it.getLong(0),it.getDouble(1),it.getDouble(2),it.getDouble(3),it.getDouble(4),it.getInt(5))},
         pulses=array(j,"pulses"){Pulse(it.getLong(0),it.getDouble(1),it.getInt(2))},motion=array(j,"motion"){Motion(it.getLong(0),it.getDouble(1),it.getDouble(2),if(it.isNull(3))null else it.getDouble(3))},
         pauses=array(j,"pauses"){PauseSpan(it.getLong(0),it.getLong(1))},rpe=if(j.has("rpe"))j.getInt("rpe")else null,note=j.optString("note"),exportStatus=j.optString("export","Noch nicht geteilt"),revision=j.optLong("revision",1),exportedRevision=j.optLong("exportedRevision",0),recovered=j.optBoolean("recovered"), phases=array(j,"phases"){Phase(it.getString(0),it.getInt(1),it.getBoolean(2))},targetPace=j.optInt("targetPace",345),coachReason=j.optString("reason"),readiness=j.optString("readiness","READY"),
+        openEnded=j.optBoolean("openEnded"),plannedSeconds=if(j.has("plannedSeconds"))j.getInt("plannedSeconds")else null,
+        coachMission=j.optString("coachMission"),coachOutcome=j.optString("coachOutcome"),referenceRunId=j.optString("referenceRunId").takeIf{it.isNotBlank()},
+        coachEvents=array(j,"coachEvents"){CoachEvent(it.getDouble(0),CueKind.valueOf(it.getString(1)),it.getString(2))},
         cooldown=j.optJSONObject("cooldown")?.let { c -> Cooldown(
             started=c.getLong("start"),startBpm=c.getInt("startBpm"),restingHr=if(c.has("rest"))c.getInt("rest")else null,
             ended=if(c.has("end"))c.getLong("end")else null,state=CooldownState.valueOf(c.getString("state")),

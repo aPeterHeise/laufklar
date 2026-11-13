@@ -29,7 +29,7 @@ import kotlin.math.*
 @Composable fun ProgressScreen(runs:List<Run>,profile:Profile){
     val weeks=(3 downTo 0).map{weekRuns(runs,it)};val maxDistance=weeks.maxOf{it.sumOf{r->r.distance}}.coerceAtLeast(1000.0)
     val plan=remember(profile,runs){AdaptiveTrainer.plan(profile,runs)}
-    val benchmarks=runs.filter{it.workout==Workout.BASELINE}.mapNotNull{r->Metrics.benchmark(r)?.let{Triple(r,it.first,it.second)}}
+    val benchmarks=runs.mapNotNull{r->Metrics.benchmark(r)?.let{Triple(r,it.first,it.second)}}
     Page{
         Heading("Fortschritt,\nder sich aufbaut.","Dein Maßstab bist du selbst. Vergleiche ähnliche Strecken, Temperaturen und Tagesformen.")
         CardBlock{
@@ -50,14 +50,18 @@ import kotlin.math.*
             Text(plan.focus.label,color=Lime,fontWeight=FontWeight.SemiBold)
             Text(plan.reason,color=Muted,lineHeight=23.sp)
             Text("Der Trainer bewertet nach jedem Lauf neu: regelmäßige lockere Einheiten, passende längere Läufe und gelegentlich kontrolliertes Tempo. Nach Pausen oder hoher Belastung geht es zurück zum Wiedereinstieg. Es gibt kein Enddatum.",color=Muted,lineHeight=23.sp)
-            Text("Aktuelle Vorschläge: ${plan.easyMinutes} Minuten locker oder ${plan.longMinutes} Minuten länger locker."+if(plan.startingPaceKnown)" Tempoabschnitte bei Freigabe: ${plan.repetitions} × ${plan.workSeconds/60.0} Minuten, etwa ${Metrics.pace(plan.targetPace.toDouble())} min/km."else " Dein Ausgangstempo lerne ich erst aus deinen lockeren Läufen.",color=Lime,fontSize=13.sp)
+            Text("Deine normale Runde bleibt offen. Für längere Läufe: etwa ${plan.longMinutes} Minuten als Orientierung."+if(plan.startingPaceKnown)" Tempoabschnitte bei Freigabe: ${plan.repetitions} × ${plan.workSeconds/60.0} Minuten, etwa ${Metrics.pace(plan.targetPace.toDouble())} min/km."else " Dein Ausgangstempo lerne ich erst aus deinen lockeren Läufen.",color=Lime,fontSize=13.sp)
             Text("Ohne vollständige Tempoeinheit, Belastungsangabe und brauchbare Puls-/Tempodaten wird nicht automatisch schneller gefordert. Verbesserungen ändern jeweils nur eine Belastungsgröße. Eine Zielerreichung wird anhand der gesamten verstrichenen Zeit inklusive Pausen geprüft, getrennt nach Outdoor/Laufband.",color=Muted,fontSize=12.sp,lineHeight=19.sp)
         }
         CardBlock{
-            Eyebrow("Fortschritt vergleichen")
+            Eyebrow("Automatisch vergleichen")
             Text("Gleicher Puls. Mehr Tempo?",fontSize=24.sp,fontWeight=FontWeight.SemiBold)
-            Text("Wähle eine flache Strecke oder dasselbe Laufband mit gleicher Steigung. 10 Minuten locker aufwärmen, dann 20 Minuten gleichmäßig und in ganzen Sätzen sprechend laufen. Kein Maximaltest. Alle 2–4 Wochen unter ähnlichen Bedingungen wiederholen.",color=Muted,lineHeight=23.sp)
-            if(benchmarks.isEmpty())Text("Noch kein auswertbarer Vergleich. Benötigt werden 20 gleichmäßige Minuten nach dem Aufwärmen und mindestens 80 % Pulsabdeckung.",color=Lime,fontSize=13.sp)
+            Text("Auf bekannten Wegen vergleicht der Coach passende Abschnitte in derselben Richtung. Mehr Tempo bei ähnlichem Puls oder weniger Puls bei ähnlichem Tempo werden sichtbar. Ein einzelner Lauf beweist noch keinen Fitnessfortschritt; Wetter und Tagesform spielen mit.",color=Muted,lineHeight=23.sp)
+            runs.sortedByDescending{it.started}.filter{r->r.coachEvents.any{it.kind==CueKind.PROGRESS}}.take(3).forEach{r->
+                Text(dateText(r.started),color=Muted,fontSize=12.sp)
+                r.coachEvents.filter{it.kind==CueKind.PROGRESS}.take(2).forEach{Text(it.text,color=Lime,fontSize=13.sp)}
+            }
+            if(benchmarks.isEmpty())Text("Für längere Tempo-/Pulsvergleiche fehlen noch 20 gleichmäßige Minuten nach dem Aufwärmen mit guter Pulsabdeckung. Kürzere Streckenvergleiche entstehen bereits während deiner normalen Runde.",color=Lime,fontSize=13.sp)
             benchmarks.take(6).forEach{(r,pace,hr)->
                 HorizontalDivider(color=Muted.copy(alpha=.2f));Text(dateText(r.started),fontSize=12.sp,color=Muted)
                 Row(Modifier.fillMaxWidth()){Stat(Metrics.pace(pace),"min/km nach Warm-up",Lime);Stat(hr.roundToInt().toString(),"Ø bpm")}
@@ -79,6 +83,7 @@ import kotlin.math.*
     var audio by remember(profile){mutableStateOf(profile.audio)};var cue by remember(profile){mutableIntStateOf(profile.cueMeters)};var maps by remember(profile){mutableStateOf(profile.onlineMaps)}
     var health by remember(profile){mutableStateOf(profile.healthExport)};var route by remember(profile){mutableStateOf(profile.shareRoute)};var ready by remember(profile){mutableStateOf(profile.intensityReady)}
     var autoPause by remember(profile){mutableStateOf(profile.autoPause)}
+    var experienceKm by remember(profile){mutableStateOf(profile.distanceExperienceKm?.toString()?:"")}
     var goalKm by remember(profile){mutableStateOf(profile.goalKm.toString())};var goalMinutes by remember(profile){mutableStateOf((profile.goalKm*profile.goalPace/60).toString())};var frequency by remember(profile){mutableIntStateOf(profile.runsPerWeek)};var pace by remember(profile){mutableStateOf(profile.usualPace?.let{Metrics.pace(it.toDouble())}?:"")};var paceKnown by remember(profile){mutableStateOf(profile.usualPace!=null)};var error by remember{mutableStateOf<String?>(null)}
     var goalPicker by remember{mutableStateOf<Profile?>(null)}
     var resetGoalReference by remember{mutableStateOf(false)}
@@ -86,11 +91,13 @@ import kotlin.math.*
     val audioStatus by Live.audioStatus.collectAsState()
     fun draft():Profile?{
         val goal=goalKm.replace(',','.').toDoubleOrNull();val minutes=goalMinutes.replace(',','.').toDoubleOrNull()
+        val experience=experienceKm.replace(',','.').toDoubleOrNull()
+        if(experienceKm.isNotBlank()&&experience==null){error="Bereits gelaufene Kilometer bitte als Zahl eingeben.";return null}
         val a=age.toIntOrNull();val w=weight.replace(',','.').toDoubleOrNull();val max=maximum.toIntOrNull();val rest=resting.toIntOrNull();val p=if(paceKnown)Metrics.parsePace(pace)else null
         if(paceKnown&&p==null){error="Pace bitte als Minuten:Sekunden eingeben, z. B. 5:30 (zwischen 3:00 und 20:00), oder „Weiß ich noch nicht“ wählen.";return null}
         val bounds=if(custom.isBlank())null else custom.split(',',';').map{it.trim().toIntOrNull()}
         if(goal==null||!goal.isFinite()||goal<=0||minutes==null||!minutes.isFinite()||minutes<=0||a==null||w==null||(maximum.isNotBlank()&&max==null)||(resting.isNotBlank()&&rest==null)||(bounds!=null&&bounds.any{it==null})){error="Bitte gültige Zahlen eingeben. Zonengrenzen mit Komma trennen.";return null}
-        val draft=profile.copy(age=a,weight=w,sex=sex,measuredMax=max,restingHr=rest,reserveZones=reserve,customBounds=bounds?.filterNotNull(),audio=audio,cueMeters=cue,onlineMaps=maps,healthExport=health,shareRoute=route,intensityReady=ready,goalKm=goal,goalPace=(minutes*60/goal).roundToInt(),runsPerWeek=frequency,usualPace=p,autoPause=autoPause)
+        val draft=profile.copy(age=a,weight=w,sex=sex,measuredMax=max,restingHr=rest,reserveZones=reserve,customBounds=bounds?.filterNotNull(),audio=audio,cueMeters=cue,onlineMaps=maps,healthExport=health,shareRoute=route,intensityReady=ready,goalKm=goal,goalPace=(minutes*60/goal).roundToInt(),runsPerWeek=frequency,usualPace=p,autoPause=autoPause,distanceExperienceKm=experience)
         error=draft.validate();return draft.takeIf{error==null}
     }
     Page{
@@ -108,6 +115,8 @@ import kotlin.math.*
             Text("Alter und Geschlecht bestimmen deine Vergleichsgruppe für die Zielvorschläge aus der Studie. Ein neues Ziel übernimmst du bewusst über „Laufziel entdecken“.",color=Muted,fontSize=12.sp)
             ResearchNorms.reference(age.toIntOrNull()?:profile.age,sex)?.let{reference->Text("Deine Studienreferenz: ${Metrics.pace(reference.first)} min/km · n=${reference.second}. Bestpace der Vergleichsgruppe, keine Vorgabe für lockere Läufe.",color=Lime,fontSize=12.sp)}
             Text("Gewicht ist eine ergänzende Profilangabe. Wir berechnen daraus keine Soll-Pace oder Pulszone: Dafür lernen wir aus deinen Läufen bzw. verwenden gemessene Pulsgrenzen.",color=Muted,fontSize=12.sp)
+            Field("Schon am Stück gelaufen · km (optional)",experienceKm,{experienceKm=it})
+            Text("Wenn du die Zieldistanz schon laufen kannst, richtet sich das Coaching auf dein Tempo. Diese Angabe ist noch kein Nachweis einer Zielzeit.",color=Muted,fontSize=12.sp)
             Text("Deine bisherige Pace",fontWeight=FontWeight.SemiBold)
             Text("Pace ist die Zeit für einen Kilometer. 5:30 bedeutet 5 Minuten und 30 Sekunden pro Kilometer. Kleiner heißt schneller.",color=Muted,fontSize=12.sp)
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
@@ -134,7 +143,7 @@ import kotlin.math.*
             Toggle("Outdoor-Läufe automatisch pausieren","Bei etwa 8 Sekunden Stillstand pausieren, nach 3 Sekunden Bewegung fortsetzen. Mit Ansage bei aktiviertem Audio. Manuelle Pausen bleiben bestehen.",autoPause,{autoPause=it})
             Toggle("Ansagen während des Laufs","Pace, Gesamtstrecke, Puls und nächster Trainingsschritt",audio,{audio=it})
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){listOf(250,500,1000).forEach{m->FilterChip(selected=cue==m,onClick={cue=m},label={Text("$m m")})}}
-            Text("Bei länger erhöhtem Puls kommt ein Hinweis bereits vor der nächsten Distanzansage. Intervallwechsel erfolgen nach Zeit. Ohne frischen Puls fordert der Coach keine Temposteigerung.",color=Muted,fontSize=12.sp,lineHeight=19.sp)
+            Text("Distanzinfos und Coaching sind getrennt. Der Coach erklärt eine nötige Entlastung höchstens zweimal ausführlicher und bestätigt sinkenden Puls. Geschätzte Zonen werden nicht als gemessene persönliche Grenze behandelt. Ohne frischen Puls keine Temposteigerung.",color=Muted,fontSize=12.sp,lineHeight=19.sp)
             OutlinedButton(onClick={speech.speak("Laufklar ist bereit. Ein Kilometer. Pace sechs Minuten pro Kilometer. Locker bleiben und in ganzen Sätzen sprechen.")},modifier=Modifier.fillMaxWidth()){Icon(Icons.Outlined.VolumeUp,null);Spacer(Modifier.width(8.dp));Text("Ansage testen")}
             Text(audioStatus,color=Muted,fontSize=12.sp)
             TextButton(onClick={context.startActivity(Intent("com.android.settings.TTS_SETTINGS"))}){Text("Android-Sprachausgabe öffnen")}
