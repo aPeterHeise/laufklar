@@ -11,11 +11,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.MyLocation
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
@@ -30,7 +34,7 @@ import kotlin.math.hypot
 
 @Composable
 @SuppressLint("ClickableViewAccessibility") // Observes dragging only; MapView still handles every touch and accessibility click.
-fun RouteMap(points:List<TrackPoint>,online:Boolean,modifier:Modifier=Modifier,followPosition:Boolean=false){
+fun RouteMap(points:List<TrackPoint>,online:Boolean,modifier:Modifier=Modifier,followPosition:Boolean=false,pulses:List<Pulse> = emptyList(),zoneBounds:List<Int> = Profile().bounds){
     var view by remember{mutableStateOf<MapView?>(null)}
     var following by rememberSaveable(followPosition){mutableStateOf(followPosition)}
     val camera=remember{RouteCamera()}
@@ -60,11 +64,16 @@ fun RouteMap(points:List<TrackPoint>,online:Boolean,modifier:Modifier=Modifier,f
             }
         },update={map->
             map.setUseDataConnection(online)
-            if(camera.drawnPoints!==points){
+            if(camera.drawnPoints!==points||camera.drawnPulses!==pulses||camera.drawnBounds!=zoneBounds){
                 camera.drawnPoints=points
+                camera.drawnPulses=pulses;camera.drawnBounds=zoneBounds
                 map.overlays.clear()
-                points.groupBy{it.segment}.values.forEach{part->
-                    if(part.size>1){val line=Polyline(map);line.setPoints(part.map{GeoPoint(it.lat,it.lon)});line.outlinePaint.color=android.graphics.Color.rgb(56,113,45);line.outlinePaint.strokeWidth=10f;map.overlays.add(line)}
+                zoneRouteParts(points,pulses,zoneBounds).forEach{part->
+                    val coordinates=part.points.map{GeoPoint(it.lat,it.lon)}
+                    val border=Polyline(map);border.setPoints(coordinates);border.outlinePaint.color=android.graphics.Color.DKGRAY;border.outlinePaint.strokeWidth=14f;map.overlays.add(border)
+                    val line=Polyline(map);line.setPoints(coordinates)
+                    line.outlinePaint.color=(part.zone?.let{ZoneColors[it]}?:UnknownZoneColor).toArgb();line.outlinePaint.strokeWidth=10f
+                    map.overlays.add(line)
                 }
                 points.firstOrNull()?.let{p->map.overlays.add(Marker(map).apply{position=GeoPoint(p.lat,p.lon);title="Start";setAnchor(Marker.ANCHOR_CENTER,Marker.ANCHOR_BOTTOM)})}
                 points.lastOrNull()?.let{p->map.overlays.add(Marker(map).apply{position=GeoPoint(p.lat,p.lon);title=if(followPosition)"Aktuelle Position"else "Ziel / letzter Punkt";setAnchor(Marker.ANCHOR_CENTER,Marker.ANCHOR_BOTTOM)})}
@@ -98,4 +107,16 @@ private class RouteCamera {
     var wasFollowing=false
     var lastCentered:TrackPoint?=null
     var drawnPoints:List<TrackPoint>?=null
+    var drawnPulses:List<Pulse>?=null
+    var drawnBounds:List<Int>?=null
+}
+val UnknownZoneColor=Color(0xFF9A9A9A)
+@Composable fun RouteZoneLegend(){
+    Column(verticalArrangement=Arrangement.spacedBy(6.dp)){
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+            (1..5).forEach{zone->Text("● Z$zone",color=ZoneColors[zone],fontSize=12.sp)}
+        }
+        Text("● Unter Z1",color=ZoneColors[0],fontSize=11.sp)
+        Text("● Ohne aktuellen Puls · grau",color=UnknownZoneColor,fontSize=11.sp)
+    }
 }

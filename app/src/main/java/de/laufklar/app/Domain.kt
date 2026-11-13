@@ -10,10 +10,10 @@ data class Profile(
     val age: Int = 38, val weight: Double = 83.0, val sex: String = "Männlich",
     val measuredMax: Int? = null, val restingHr: Int? = null, val reserveZones: Boolean = false,
     val customBounds: List<Int>? = null, val audio: Boolean = true, val cueMeters: Int = 500,
-    val healthExport: Boolean = false, val shareRoute: Boolean = false, val onlineMaps: Boolean = true,
+    val healthExport: Boolean = true, val shareRoute: Boolean = false, val onlineMaps: Boolean = true,
     val intensityReady: Boolean = false, val usualPace: Int? = 345,
     val goalKm: Double = 10.0, val goalPace: Int = 300, val runsPerWeek: Int = 3,
-    val sensorAddress: String? = null, val sensorName: String? = null
+    val sensorAddress: String? = null, val sensorName: String? = null, val autoPause: Boolean = true
 ) {
     val maxHr: Int get() = measuredMax ?: (208 - .7 * age).roundToInt()
     val bounds: List<Int> get() = customBounds ?: (5..10).map { p ->
@@ -54,7 +54,8 @@ data class Run(
     val zoneBounds: List<Int>, val estimatedZones: Boolean = true,
     val rpe: Int? = null, val note: String = "", val exportStatus: String = "Noch nicht geteilt",
     val revision: Long = 1, val exportedRevision: Long = 0, val recovered: Boolean = false,
-    val phases: List<Phase> = emptyList(), val targetPace: Int = 345, val coachReason: String = "", val readiness: String = "READY"
+    val phases: List<Phase> = emptyList(), val targetPace: Int = 345, val coachReason: String = "", val readiness: String = "READY",
+    val cooldown: Cooldown? = null
 ) {
     val distance get() = correctedMeters ?: meters
     val pace get() = if (distance >= 20 && activeSeconds > 0) activeSeconds * 1000 / distance else null
@@ -90,6 +91,8 @@ object Metrics {
     }
     fun duration(seconds: Double): String { val s = seconds.toInt(); return "%d:%02d".format(Locale.GERMANY, s / 60, s % 60) }
     fun km(meters: Double) = "%.2f".format(Locale.GERMANY, meters / 1000)
+    fun spokenKm(meters: Double) = km(meters).trimEnd('0').trimEnd(',')
+    fun zone(bpm: Int, bounds: List<Int>): Int = if (bpm < bounds[0]) 0 else (1..5).firstOrNull { bpm < bounds[it] } ?: 5
     fun distance(a: TrackPoint, b: TrackPoint): Double {
         val p1 = Math.toRadians(a.lat); val p2 = Math.toRadians(b.lat)
         val dlat = p2 - p1; val dlon = Math.toRadians(b.lon - a.lon)
@@ -119,7 +122,7 @@ object Metrics {
         run.pulses.zipWithNext().forEach { (a, b) ->
             val dt = b.elapsed - a.elapsed
             if (dt in 0.0..10.0 && b.time - a.time <= 10_000) {
-                val z = if (a.bpm < run.zoneBounds[0]) 0 else (1..5).firstOrNull { a.bpm < run.zoneBounds[it] } ?: 5
+                val z = zone(a.bpm, run.zoneBounds)
                 totals[z] += dt
             }
         }; return totals
@@ -195,12 +198,13 @@ class Coach {
             return if (phase == null) "Trainingsteil abgeschlossen. Laufe locker aus oder beende deinen Lauf." else "${phase.name}. ${phase.duration / 60} Minuten. $advice"
         }
         if (run.meters >= nextDistance) {
+            val milestone = floor(run.meters / profile.cueMeters) * profile.cueMeters
             reset(run.meters, profile.cueMeters)
             val pace = Metrics.recentPace(run.motion, run.activeSeconds)
             val paceText = if (pace == null) "Pace derzeit nicht verlässlich." else {
                 val sec = pace.roundToInt(); "Pace ${sec / 60} Minuten ${sec % 60} Sekunden pro Kilometer."
             }
-            return "${Metrics.km(run.meters)} Kilometer. $paceText ${hr?.let { "Puls $it." } ?: ""} $advice"
+            return "${Metrics.spokenKm(milestone)} Kilometer. $paceText ${hr?.let { "Puls $it." } ?: ""} $advice"
         }
         return null
     }

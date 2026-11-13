@@ -78,6 +78,7 @@ import kotlin.math.*
     var reserve by remember(profile){mutableStateOf(profile.reserveZones)};var custom by remember(profile){mutableStateOf(profile.customBounds?.joinToString(", ")?:"")}
     var audio by remember(profile){mutableStateOf(profile.audio)};var cue by remember(profile){mutableIntStateOf(profile.cueMeters)};var maps by remember(profile){mutableStateOf(profile.onlineMaps)}
     var health by remember(profile){mutableStateOf(profile.healthExport)};var route by remember(profile){mutableStateOf(profile.shareRoute)};var ready by remember(profile){mutableStateOf(profile.intensityReady)}
+    var autoPause by remember(profile){mutableStateOf(profile.autoPause)}
     var goalKm by remember(profile){mutableStateOf(profile.goalKm.toString())};var goalMinutes by remember(profile){mutableStateOf((profile.goalKm*profile.goalPace/60).toString())};var frequency by remember(profile){mutableIntStateOf(profile.runsPerWeek)};var pace by remember(profile){mutableStateOf(profile.usualPace?.let{Metrics.pace(it.toDouble())}?:"")};var paceKnown by remember(profile){mutableStateOf(profile.usualPace!=null)};var error by remember{mutableStateOf<String?>(null)}
     var goalPicker by remember{mutableStateOf<Profile?>(null)}
     var resetGoalReference by remember{mutableStateOf(false)}
@@ -89,7 +90,7 @@ import kotlin.math.*
         if(paceKnown&&p==null){error="Pace bitte als Minuten:Sekunden eingeben, z. B. 5:30 (zwischen 3:00 und 20:00), oder „Weiß ich noch nicht“ wählen.";return null}
         val bounds=if(custom.isBlank())null else custom.split(',',';').map{it.trim().toIntOrNull()}
         if(goal==null||!goal.isFinite()||goal<=0||minutes==null||!minutes.isFinite()||minutes<=0||a==null||w==null||(maximum.isNotBlank()&&max==null)||(resting.isNotBlank()&&rest==null)||(bounds!=null&&bounds.any{it==null})){error="Bitte gültige Zahlen eingeben. Zonengrenzen mit Komma trennen.";return null}
-        val draft=profile.copy(age=a,weight=w,sex=sex,measuredMax=max,restingHr=rest,reserveZones=reserve,customBounds=bounds?.filterNotNull(),audio=audio,cueMeters=cue,onlineMaps=maps,healthExport=health,shareRoute=route,intensityReady=ready,goalKm=goal,goalPace=(minutes*60/goal).roundToInt(),runsPerWeek=frequency,usualPace=p)
+        val draft=profile.copy(age=a,weight=w,sex=sex,measuredMax=max,restingHr=rest,reserveZones=reserve,customBounds=bounds?.filterNotNull(),audio=audio,cueMeters=cue,onlineMaps=maps,healthExport=health,shareRoute=route,intensityReady=ready,goalKm=goal,goalPace=(minutes*60/goal).roundToInt(),runsPerWeek=frequency,usualPace=p,autoPause=autoPause)
         error=draft.validate();return draft.takeIf{error==null}
     }
     Page{
@@ -123,12 +124,14 @@ import kotlin.math.*
             (1..5).forEach{zone->Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("Zone $zone",color=ZoneColors[zone]);Text("${profile.bounds[zone-1]}–${profile.bounds[zone]-if(zone==5)0 else 1} bpm",color=Cream)}}
             Text("Das ist eine konventionelle Fünf-Zonen-Einteilung (50–60–70–80–90–100 %). Sie lokalisiert keine individuellen Laktat- oder Atemschwellen. Zone 2 bei verschiedenen Anbietern kann etwas anderes bedeuten.",color=Muted,fontSize=12.sp,lineHeight=19.sp)
             Field("Gemessener Maximalpuls · optional",maximum,{maximum=it});Field("Ruhepuls · optional",resting,{resting=it})
+            Text("Dein gemessener Ruhepuls dient auch als Bezug für den persönlichen Cooldown-Score nach dem Lauf.",color=Muted,fontSize=12.sp)
             Toggle("Herzfrequenzreserve verwenden","Nur mit gemessenem Ruhepuls. Andere Grenzen als %HFmax.",reserve,{reserve=it})
             Field("6 persönliche Zonengrenzen · optional",custom,{custom=it},false)
             Text("Format: untere Grenze Z1, Beginn Z2, Z3, Z4, Z5, obere Grenze Z5. Beispiel: 90, 110, 130, 150, 165, 185. Manuelle Grenzen haben Vorrang. Gemessene Werte bitte aus dem Befund übernehmen; keinen Maximaltest auf eigene Faust.",color=Muted,fontSize=12.sp,lineHeight=19.sp)
         }
         CardBlock{
             Eyebrow("Audio-Coach")
+            Toggle("Outdoor-Läufe automatisch pausieren","Bei etwa 8 Sekunden Stillstand pausieren, nach 3 Sekunden Bewegung fortsetzen. Mit Ansage bei aktiviertem Audio. Manuelle Pausen bleiben bestehen.",autoPause,{autoPause=it})
             Toggle("Ansagen während des Laufs","Pace, Gesamtstrecke, Puls und nächster Trainingsschritt",audio,{audio=it})
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){listOf(250,500,1000).forEach{m->FilterChip(selected=cue==m,onClick={cue=m},label={Text("$m m")})}}
             Text("Bei länger erhöhtem Puls kommt ein Hinweis bereits vor der nächsten Distanzansage. Intervallwechsel erfolgen nach Zeit. Ohne frischen Puls fordert der Coach keine Temposteigerung.",color=Muted,fontSize=12.sp,lineHeight=19.sp)
@@ -156,7 +159,7 @@ import kotlin.math.*
             Eyebrow("Verbindungen")
             Text(profile.sensorName?:"Fitbit Air noch nicht ausgewählt",color=Muted)
             OutlinedButton(onClick=onConnect,modifier=Modifier.fillMaxWidth()){Text("Fitbit Air verbinden")}
-            Toggle("Health Connect nach dem Lauf","Übergabe auf diesem Telefon; kein Konto bei Laufklar",health,{health=it})
+            Toggle("Automatisch in Health Connect speichern","Nach dem Speichern und gegebenenfalls dem Cooldown. Einmalige Schreibfreigabe über „Health Connect verbinden“ nötig.",health,{health=it})
             Toggle("GPS-Route mit übergeben","Zusätzliche Health-Connect-Freigabe erforderlich",route,{route=it})
             FullButton("Health Connect verbinden"){draft()?.let{p->scope.launch{context.repo().setProfile(p);onHealth()}}}
             OutlinedButton(onClick={context.startActivity(Intent("android.health.connect.action.HEALTH_HOME_SETTINGS"))},modifier=Modifier.fillMaxWidth()){Text("Health-Connect-Freigaben öffnen")}

@@ -78,6 +78,7 @@ class MainActivity:ComponentActivity(){
         Live.sensor.rememberDevice(profile.sensorAddress,profile.sensorName)
         Live.sensorOwnership.device(profile.sensorAddress)
     }}
+    LaunchedEffect(ready,profile.healthExport){if(ready&&profile.healthExport)HealthExporter(context).exportPending()}
     val previewWanted=ready&&((tab==0&&active==null&&previousActive==null&&detailId==null&&!privacy)||sensorDialog)
     DisposableEffect(previewWanted,context){
         Live.sensorOwnership.preview(previewWanted,context)
@@ -90,7 +91,7 @@ class MainActivity:ComponentActivity(){
     }
     fun request(perms:Array<String>,then:()->Unit){if(perms.all{context.checkSelfPermission(it)==PackageManager.PERMISSION_GRANTED})then()else{requested=then;permissions.launch(perms)}}
     val healthPermissions=rememberLauncherForActivityResult(PermissionController.createRequestPermissionResultContract()){granted->
-        scope.launch{if(granted.containsAll(HealthExporter.basePermissions)){repo.setProfile(repo.profile.value.copy(healthExport=true));notice="Health Connect verbunden. Neue Läufe werden nach dem Speichern lokal geteilt."}else notice="Health Connect: Schreibfreigaben fehlen. Läufe bleiben in Laufklar."}
+        scope.launch{if(granted.containsAll(HealthExporter.basePermissions)){repo.setProfile(repo.profile.value.copy(healthExport=true));HealthExporter(context).exportPending();notice="Health Connect verbunden. Neue Läufe werden nach dem Cooldown automatisch gespeichert."}else notice="Health Connect: Schreibfreigaben fehlen. Läufe bleiben in Laufklar."}
     }
     fun healthConnect(){if(HealthExporter(context).available()) healthPermissions.launch(HealthExporter.basePermissions + if(repo.profile.value.shareRoute)setOf(HealthExporter.routePermission)else emptySet()) else notice="Health Connect ist auf diesem Gerät nicht verfügbar."}
     LaunchedEffect(active?.id,runs.size){if(active!=null)previousActive=active!!.id else if(previousActive!=null){detailId=previousActive;previousActive=null}}
@@ -223,7 +224,9 @@ fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
     }},confirmButton={TextButton(onClick=onDismiss){Text("Fertig")}},dismissButton={TextButton(onClick={Live.sensor.scan()}){Text("Erneut suchen")}})
 }
 @Composable fun ActiveScreen(run:Run,profile:Profile,onConnect:()->Unit){
+    if(run.ended!=null){CooldownScreen(run);return}
     val context=LocalContext.current;val paused by Live.paused.collectAsStateWithLifecycle();val saving by Live.saving.collectAsStateWithLifecycle()
+    val autoPaused by Live.autoPaused.collectAsStateWithLifecycle()
     val message by Live.message.collectAsStateWithLifecycle();val gps by Live.gps.collectAsStateWithLifecycle();val speed by Live.beltSpeed.collectAsStateWithLifecycle();val audio by Live.audioStatus.collectAsStateWithLifecycle()
     val reviewing by Live.reviewing.collectAsStateWithLifecycle()
     var editSpeed by remember{mutableStateOf(false)};var speedInput by remember{mutableStateOf("")}
@@ -234,7 +237,7 @@ fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
     val previous=phases.take(phaseIndex).sumOf{it.duration}
     fun command(action:String){context.startService(Intent(context,RunService::class.java).setAction(action))}
     Page{
-        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Eyebrow(if(paused)"PAUSE"else "LIVE · ${run.mode.label}",Lime);Text(run.workout.label,color=Muted,fontSize=12.sp)}
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Eyebrow(if(autoPaused)"AUTO-PAUSE"else if(paused)"PAUSE"else "LIVE · ${run.mode.label}",Lime);Text(run.workout.label,color=Muted,fontSize=12.sp)}
         Column{Text(Metrics.km(run.meters),fontSize=84.sp,fontWeight=FontWeight.Medium,letterSpacing=(-4).sp);Text(if(run.mode==RunMode.TREADMILL)"Kilometer · aus km/h geschätzt" else "Kilometer",color=Muted)}
         Row(Modifier.fillMaxWidth()){Stat(Metrics.pace(Metrics.recentPace(run.motion,run.activeSeconds)),"min/km · letzte 60 s");Stat(Metrics.duration(run.activeSeconds),"aktive Zeit");Stat(hr?.toString()?:"—","Puls · bpm",Peach)}
         CardBlock{
@@ -253,8 +256,12 @@ fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
             Text("Strecke = Geschwindigkeit × aktive Zeit. Passe das Tempo bei jeder Änderung am Laufband an; Pausen zählen nicht. Am Ende kannst du die Laufbanddistanz prüfen und korrigieren.",color=Muted,fontSize=12.sp)
         }else{
             Text(gps,color=Muted,fontSize=12.sp)
-            if(run.points.isNotEmpty())RouteMap(run.points,profile.onlineMaps,Modifier.fillMaxWidth().height(210.dp).clip(RoundedCornerShape(20.dp)),followPosition=true)
+            if(run.points.isNotEmpty()){
+                RouteMap(run.points,profile.onlineMaps,Modifier.fillMaxWidth().height(210.dp).clip(RoundedCornerShape(20.dp)),followPosition=true,pulses=run.pulses,zoneBounds=run.zoneBounds)
+                RouteZoneLegend()
+            }
         }
+        if(autoPaused)TextButton(onClick={command(RunService.PAUSE)}){Text("Pausiert bleiben · manuelle Pause")}
         Row(horizontalArrangement=Arrangement.spacedBy(12.dp)){
             OutlinedButton(onClick={command(if(paused)RunService.RESUME else RunService.PAUSE)},enabled=!saving,modifier=Modifier.weight(1f).height(56.dp)){Icon(if(paused)Icons.Outlined.PlayArrow else Icons.Outlined.Pause,null);Text(if(paused)"Weiter" else "Pause")}
             Button(onClick={command(RunService.REVIEW)},enabled=!saving,modifier=Modifier.weight(1f).height(56.dp)){Text(if(saving)"Schließe ab …"else "Beenden")}
@@ -276,6 +283,7 @@ fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
         Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
             Text("${Metrics.km(run.meters)} km${if(treadmill)" geschätzt"else ""} · ${Metrics.duration(run.activeSeconds)} aktive Zeit")
             Text("Die Aufzeichnung ist während dieser Auswahl pausiert.",color=Muted)
+            Text("Nach dem Speichern messen wir bei erhöhtem Live-Puls noch 60 Sekunden deinen Cooldown. Laufzeit und Strecke bleiben dabei unverändert.",color=Muted,fontSize=12.sp)
             if(treadmill){
                 Text("Welche Strecke zeigt dein Laufband? Leer lassen, um die Schätzung aus Tempo und aktiver Zeit zu übernehmen.")
                 OutlinedTextField(distance,{distance=it},label={Text("Enddistanz am Laufband · km")},enabled=!saving,isError=!valid,singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Decimal),modifier=Modifier.fillMaxWidth())
@@ -292,6 +300,57 @@ fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
         TextButton(onClick=onContinue,enabled=!saving,modifier=Modifier.fillMaxWidth()){Text("Zurück zum Lauf")}
     }})
 }
+@Composable fun CooldownScreen(run:Run){
+    val context=LocalContext.current
+    val remaining by Live.cooldownSeconds.collectAsStateWithLifecycle()
+    val saving by Live.saving.collectAsStateWithLifecycle()
+    val message by Live.message.collectAsStateWithLifecycle()
+    val liveBpm by Live.bpm.collectAsStateWithLifecycle()
+    var now by remember{mutableLongStateOf(SystemClock.elapsedRealtime())}
+    LaunchedEffect(Unit){while(true){now=SystemClock.elapsedRealtime();delay(1000)}}
+    val bpm=liveBpm?.takeIf{maxOf(now,SystemClock.elapsedRealtime())-it.second in 0..10_000}?.first
+    Page{
+        Heading(if(remaining!=null)"Dein Cooldown."else "Lauf abschließen.","${Metrics.km(run.distance)} km · ${Metrics.duration(run.activeSeconds)} aktive Zeit")
+        if(remaining!=null){
+            CardBlock{
+                Eyebrow("Lauf gespeichert",Lime)
+                Row(Modifier.fillMaxWidth()){Stat("${remaining}s","noch messen",Lime);Stat(bpm?.toString()?:"—","Puls · bpm",Peach)}
+                LinearProgressIndicator(progress={1f-(remaining?:0)/60f},modifier=Modifier.fillMaxWidth(),color=Lime,trackColor=Ink)
+                Text("Die Messung läuft auch bei ausgeschaltetem Bildschirm weiter. Lass den Pulssensor verbunden.",color=Muted)
+                if(bpm==null)Text("Warte auf frischen Puls. Ohne Endwert gibt es keinen Score.",color=Peach,fontSize=12.sp)
+            }
+            OutlinedButton(onClick={context.startService(Intent(context,RunService::class.java).setAction(RunService.STOP_COOLDOWN))},modifier=Modifier.fillMaxWidth()){
+                Text("Cooldown vorzeitig beenden")
+            }
+        }else{
+            if(saving){CircularProgressIndicator(color=Lime);Text("Lauf wird abgeschlossen …",color=Muted)}
+            else {Text(message,color=Peach);FullButton("Speichern erneut versuchen"){context.startService(Intent(context,RunService::class.java).setAction(RunService.FINISH))}}
+        }
+        run.cooldown?.let{CooldownResult(it)}
+    }
+}
+@Composable fun CooldownResult(cooldown:Cooldown){
+    CardBlock{
+        Eyebrow("Cooldown · 60 Sekunden ab Speichern",Lime)
+        Row(Modifier.fillMaxWidth()){
+            Stat(cooldown.startBpm.toString(),"Puls am Start",Peach)
+            Stat(cooldown.endBpm?.toString()?:"—","Puls nach 60 s",Peach)
+        }
+        when(cooldown.state){
+            CooldownState.MEASURING->Text("Messung läuft …",color=Muted)
+            CooldownState.INTERRUPTED->Text("Messung vorzeitig beendet oder unterbrochen. Kein 60-Sekunden-Score.",color=Muted)
+            CooldownState.COMPLETE->{
+                val drop=cooldown.dropBpm
+                if(drop==null)Text("Zu wenige frische Pulswerte am Ende der Minute. Kein verlässlicher Score.",color=Muted)
+                else Text(if(drop>=0)"Pulsabfall: $drop bpm"else "Pulsanstieg: ${-drop} bpm",fontSize=20.sp)
+                cooldown.score?.let{Metric("$it / 100","persönlicher Cooldown-Score",Lime)}
+                cooldown.restingRangeSeconds?.let{Text("Ruhepuls + 10 bpm für mindestens 3 Sekunden erreicht: nach $it Sekunden.",color=Muted,fontSize=12.sp)}
+            }
+        }
+        Text(if(cooldown.restingHr==null)"Für einen persönlichen Score hinterlege deinen gemessenen Ruhepuls im Profil. Der Pulsabfall wird auch ohne Ruhepuls gespeichert."
+            else "Ruhepuls: ${cooldown.restingHr} bpm. Der Score zeigt, wie viel Prozent des Abstands zum Ruhepuls in 60 Sekunden abgebaut wurden (0–100). Ein persönlicher Vergleichswert, keine medizinische Bewertung.",color=Muted,fontSize=12.sp)
+    }
+}
 @Composable fun History(runs:List<Run>,onOpen:(Run)->Unit){Page{
     Heading("Deine Läufe.","Jede Runde zählt. Alles bleibt auf deinem Telefon.")
     if(runs.isEmpty())EmptyState(Icons.Outlined.Route,"Hier beginnt deine Geschichte","Nach deinem ersten Lauf findest du hier Strecke, Puls, Karte und deine Notizen.")
@@ -304,6 +363,7 @@ fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Eyebrow(run.mode.label);Icon(Icons.Outlined.NorthEast,null,tint=Lime,modifier=Modifier.size(18.dp))}
     Text(run.workout.label,fontSize=19.sp,fontWeight=FontWeight.SemiBold);Text(dateText(run.started),color=Muted,fontSize=12.sp)
     Row(Modifier.fillMaxWidth()){Stat(Metrics.km(run.distance),"km",Lime);Stat(Metrics.pace(run.pace),"min/km");Stat(run.averageHr?.toString()?:"—","Ø bpm")}
+    run.cooldown?.score?.let{Text("Cooldown $it / 100 · Pulsabfall ${run.cooldown.dropBpm} bpm",color=Muted,fontSize=12.sp)}
 }}
 @Composable fun EmptyState(icon:ImageVector,title:String,body:String){CardBlock{Icon(icon,null,tint=Lime,modifier=Modifier.size(36.dp));Text(title,fontSize=22.sp,fontWeight=FontWeight.SemiBold);Text(body,color=Muted,lineHeight=23.sp)}}
 @Composable fun Field(label:String,value:String,onChange:(String)->Unit,numeric:Boolean=true){OutlinedTextField(value,onChange,label={Text(label)},modifier=Modifier.fillMaxWidth(),singleLine=true,shape=RoundedCornerShape(14.dp),keyboardOptions=KeyboardOptions(keyboardType=if(numeric)KeyboardType.Decimal else KeyboardType.Text))}
@@ -322,7 +382,8 @@ fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
         Row(Modifier.fillMaxWidth()){Stat(Metrics.km(run.distance),"Kilometer",Lime);Stat(Metrics.duration(run.activeSeconds),"aktive Zeit");Stat(Metrics.pace(run.pace),"Ø min/km")}
         if(run.mode==RunMode.TREADMILL)Text(if(run.correctedMeters==null)"Distanz aus eingegebenem Laufbandtempo geschätzt · Endwert bitte prüfen"else "Distanz manuell vom Laufband übernommen",color=Muted,fontSize=12.sp)
         if(run.points.isNotEmpty()){
-            RouteMap(run.points,profile.onlineMaps,Modifier.fillMaxWidth().height(280.dp).clip(RoundedCornerShape(24.dp)))
+            RouteMap(run.points,profile.onlineMaps,Modifier.fillMaxWidth().height(280.dp).clip(RoundedCornerShape(24.dp)),pulses=run.pulses,zoneBounds=run.zoneBounds)
+            RouteZoneLegend()
             Text("© OpenStreetMap-Mitwirkende · Pausen und GPS-Lücken sind getrennte Abschnitte",color=Muted,fontSize=11.sp)
         }
         CardBlock{
@@ -337,12 +398,13 @@ fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
             }
             if(run.estimatedZones)Text("Zonen beruhen auf einer Altersformel, nicht auf einem Leistungstest.",color=Muted,fontSize=11.sp)
         }
+        run.cooldown?.let{CooldownResult(it)}
         CardBlock{Eyebrow("Trainer-Notiz");Text(run.coachReason.ifBlank{"Freier Lauf"},color=Muted,fontSize=13.sp);Text("${run.phases.sumOf{it.duration}/60} Minuten geplant · ${if(run.workout==Workout.INTERVALS)"Zielpace ${Metrics.pace(run.targetPace.toDouble())}"else "locker nach Sprechtest"}",color=Muted,fontSize=12.sp)}
         CardBlock{Eyebrow("Wie hat es sich angefühlt?");Text(run.rpe?.let{"Belastung $it / 10"}?:"Noch keine Einschätzung");if(run.note.isNotBlank())Text(run.note,color=Muted);OutlinedButton(onClick={edit=true},modifier=Modifier.fillMaxWidth()){Text(if(run.mode==RunMode.TREADMILL)"Distanz & Belastung ergänzen"else "Belastung & Notiz ergänzen")}}
         CardBlock{
             Eyebrow("Health Connect");Text(run.exportStatus,color=Muted,fontSize=13.sp)
             if(run.exportedRevision in 1 until run.revision)Text("Änderungen noch nicht geteilt",color=Peach,fontSize=12.sp)
-            FullButton(if(busy)"Wird geteilt …"else "In Health Connect speichern",enabled=!busy){busy=true;scope.launch{try{onNotice(HealthExporter(context).export(run))}finally{busy=false}}}
+            if(run.exportedRevision<run.revision)FullButton(if(busy)"Wird geteilt …"else if(profile.healthExport)"Übertragung erneut versuchen"else "In Health Connect speichern",enabled=!busy){busy=true;scope.launch{try{onNotice(HealthExporter(context).export(run))}finally{busy=false}}}
             Text("Andere Apps erhalten Zugriff nur mit deiner Freigabe in Health Connect.",color=Muted,fontSize=12.sp)
         }
         Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){OutlinedButton(onClick={export.launch("laufklar-${localDate(run.started)}.json")},modifier=Modifier.weight(1f)){Text("JSON exportieren")};if(run.points.isNotEmpty())OutlinedButton(onClick={gpx.launch("laufklar-${localDate(run.started)}.gpx")},modifier=Modifier.weight(1f)){Text("GPX exportieren")}}
