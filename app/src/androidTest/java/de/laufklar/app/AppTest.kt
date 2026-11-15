@@ -94,16 +94,22 @@ class AppTest {
         compose.onNodeWithText("Datenschutz & Forschungsgrundlagen").performScrollTo().performClick()
         compose.onNodeWithText("Deine Daten.\nBei dir.").assertIsDisplayed()
     }
-    @Test fun researchGoalCanBeAdoptedAndChanged(){
-        awaitReady();val repo=compose.activity.repo();val original=repo.profile.value
-        compose.onNodeWithText("Profil",useUnmergedTree=true).performClick()
-        compose.onNodeWithText("Laufziel entdecken").performScrollTo().performClick()
-        compose.onNodeWithText("Dein Alter").performTextReplacement("38")
-        compose.onNodeWithText("110 %").performScrollTo().performClick()
-        compose.onNodeWithText("Als dauerhaftes Laufziel übernehmen").performClick()
-        compose.waitUntil(10000){repo.profile.value.goalPace==279}
-        assertEquals(10.0,repo.profile.value.goalKm,.001)
-        runBlocking{repo.setProfile(original)}
+    @Test fun researchGoalCanBeAdoptedAndChanged() {
+        awaitReady()
+        val repo = compose.activity.repo()
+        val original = repo.profile.value
+        try {
+            runBlocking { repo.setProfile(Profile()) }
+            compose.onNodeWithText("Profil", useUnmergedTree = true).performClick()
+            compose.onNodeWithText("Laufziel entdecken").performScrollTo().performClick()
+            compose.onNode(hasText("110 %") and hasClickAction()).performScrollTo().performClick()
+            compose.onNodeWithText("4:39").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("Als dauerhaftes Laufziel übernehmen").performClick()
+            compose.waitUntil(10_000) { repo.profile.value.goalPace == 279 }
+            assertEquals(10.0, repo.profile.value.goalKm, .001)
+        } finally {
+            runBlocking { repo.setProfile(original) }
+        }
     }
     @Test fun vaultEncryptsAndRoundTripsWithoutPlainText(){
         awaitReady();val context=compose.activity;val vault=Vault(context)

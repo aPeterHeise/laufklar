@@ -27,6 +27,12 @@ object AdaptiveTrainer {
         return !run.recovered && run.distance>=p.goalKm*1000 && (end-run.started)/1000.0/(run.distance/1000)<=p.goalPace && run.activeSeconds>0
     }
     fun qualitySucceeded(run:Run):Boolean {
+        if (run.sessionPlan != null) {
+            return run.hasTempoWork() && !run.recovered && run.readiness == Readiness.READY.name &&
+                run.rpe in 2..7 && run.missionFeedback != MissionFeedback.TOO_HARD &&
+                run.missionAttempts.any { it.id.intense && it.state == MissionState.SUCCEEDED } &&
+                run.coachEvents.none { it.kind == CueKind.EFFORT }
+        }
         val phases=run.phases.ifEmpty{Training.fallback(run.workout)}
         if(run.workout!=Workout.INTERVALS||run.readiness!=Readiness.READY.name||run.recovered||run.rpe==null||run.rpe>7||run.activeSeconds<phases.sumOf{it.duration}*.95) return false
         val work=phases.filter{it.intense}.sumOf{it.duration}.toDouble()
@@ -59,9 +65,9 @@ object AdaptiveTrainer {
         val priorWeeks=all.filter{now-it.started in 7*DAY until 28*DAY}
         val weeklyBase=priorWeeks.sumOf{it.activeSeconds}/3
         val loadHigh=priorWeeks.size>=4&&week.sumOf{it.activeSeconds}>weeklyBase*1.2
-        val recentHard=all.any{now-it.started<7*DAY&&it.workout==Workout.INTERVALS}
+        val recentHard=all.any{now-it.started<7*DAY&&it.hasTempoWork()}
         val rest=readiness==Readiness.UNWELL||latest?.let{now-it.ended!!<24*3_600_000L}==true||week.size>=profile.runsPerWeek||loadHigh
-        val observedEasyPaces=rested.filter{it.workout!=Workout.INTERVALS&&it.rpe!=null&&it.rpe<=4&&it.pace!=null&&it.pace!! in 180.0..1200.0}.take(3).map{it.pace!!}
+        val observedEasyPaces=rested.filter{!it.hasTempoWork()&&it.rpe!=null&&it.rpe<=4&&it.pace!=null&&it.pace!! in 180.0..1200.0}.take(3).map{it.pace!!}
         val startingPace=profile.usualPace?:observedEasyPaces.takeIf{it.size>=3}?.average()?.roundToInt()
         val qualityAllowed=startingPace!=null&&profile.intensityReady&&focus in setOf(TrainingFocus.BUILD,TrainingFocus.MAINTAIN)&&readiness==Readiness.READY&&!recentHard&&!rest&&latest?.let{now-it.ended!!>=48*3_600_000L}!=false
         val recentQuality=rested.firstOrNull{it.workout==Workout.INTERVALS}

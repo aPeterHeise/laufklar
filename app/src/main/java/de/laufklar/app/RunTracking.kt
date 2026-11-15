@@ -43,7 +43,8 @@ data class Cooldown(
     val restingHr: Int?,
     val pulses: List<CooldownPulse> = emptyList(),
     val ended: Long? = null,
-    val state: CooldownState = CooldownState.MEASURING
+    val state: CooldownState = CooldownState.MEASURING,
+    val recovery: RecoveryMethod = RecoveryMethod.UNKNOWN
 ) {
     companion object { const val DURATION_MS = 60_000L }
     // Use a short endpoint window, not the minimum pulse reached somewhere during recovery.

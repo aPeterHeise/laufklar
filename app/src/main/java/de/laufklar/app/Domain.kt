@@ -14,7 +14,8 @@ data class Profile(
     val intensityReady: Boolean = false, val usualPace: Int? = 345,
     val goalKm: Double = 10.0, val goalPace: Int = 300, val runsPerWeek: Int = 3,
     val sensorAddress: String? = null, val sensorName: String? = null, val autoPause: Boolean = true,
-    val distanceExperienceKm: Double? = null
+    val distanceExperienceKm: Double? = null,
+    val calibratedThreshold: Boolean = false, val easyPaceOverride: Int? = null
 ) {
     val maxHr: Int get() = measuredMax ?: (208 - .7 * age).roundToInt()
     val bounds: List<Int> get() = customBounds ?: (5..10).map { p ->
@@ -35,6 +36,7 @@ data class Profile(
         customBounds == null && reserveZones && restingHr == null -> "Für die Herzfrequenzreserve fehlt dein Ruhepuls."
         customBounds == null && reserveZones && restingHr != null && restingHr >= maxHr -> "Der Ruhepuls muss unter dem Maximalpuls liegen."
         customBounds != null && (customBounds.size != 6 || customBounds.any { it !in 40..230 } || customBounds.zipWithNext().any { it.first >= it.second }) -> "Sechs aufsteigende Zonengrenzen zwischen 40 und 230 eingeben."
+        easyPaceOverride != null && easyPaceOverride !in 180..1200 -> "Einstiegspace: 3:00 bis 20:00."
         usualPace != null && usualPace !in 180..1200 -> "Bisherige Pace: 3:00 bis 20:00 min/km."
         !goalKm.isFinite() || goalKm !in 1.0..42.2 -> "Zieldistanz: 1 bis 42,2 km."
         goalPace !in 180..1200 -> "Zielpace: 3:00 bis 20:00 min/km."
@@ -47,6 +49,8 @@ data class TrackPoint(val time: Long, val elapsed: Double, val lat: Double, val 
 data class Pulse(val time: Long, val elapsed: Double, val bpm: Int)
 data class Motion(val time: Long, val elapsed: Double, val meters: Double, val speed: Double?)
 data class PauseSpan(val from: Long, val until: Long)
+enum class MissionFeedback(val label: String) { TOO_EASY("Zu leicht"), FIT("Passend"), TOO_HARD("Zu schwer") }
+
 data class Run(
     val id: String = UUID.randomUUID().toString(), val started: Long, val ended: Long? = null,
     val mode: RunMode, val workout: Workout, val activeSeconds: Double = 0.0,
@@ -60,7 +64,10 @@ data class Run(
     val cooldown: Cooldown? = null,
     val openEnded: Boolean = false, val plannedSeconds: Int? = null,
     val coachMission: String = "", val coachOutcome: String = "", val referenceRunId: String? = null,
-    val coachEvents: List<CoachEvent> = emptyList()
+    val coachEvents: List<CoachEvent> = emptyList(),
+    val sessionPlan: SessionPlan? = null, val missionAttempts: List<MissionAttempt> = emptyList(),
+    val summary: RunSummary? = null,
+    val missionFeedback: MissionFeedback? = null, val unusualConditions: Boolean = false
 ) {
     val distance get() = correctedMeters ?: meters
     val pace get() = if (distance >= 20 && activeSeconds > 0) activeSeconds * 1000 / distance else null

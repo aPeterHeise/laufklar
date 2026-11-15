@@ -4,7 +4,8 @@ data class SpeechCue(
     val text: String,
     val key: String? = null,
     val validUntil: Long = Long.MAX_VALUE,
-    val relevant: () -> Boolean = { true }
+    val relevant: () -> Boolean = { true },
+    val onComplete: ((Boolean) -> Unit)? = null
 )
 
 /** Ordinary coaching is FIFO. Short status updates replace older updates and go next. */
@@ -14,13 +15,22 @@ class SpeechQueue {
         cue.key?.let(::remove)
         if (next) pending.addFirst(cue) else pending.addLast(cue)
     }
-    fun remove(key: String) { pending.removeAll { it.key == key } }
+    fun remove(key: String) {
+        val removed = pending.filter { it.key == key }
+        pending.removeAll { it.key == key }
+        removed.forEach { it.onComplete?.invoke(false) }
+    }
     fun poll(now: Long): SpeechCue? {
         while (pending.isNotEmpty()) {
             val cue = pending.removeFirst()
             if (now <= cue.validUntil && cue.relevant()) return cue
+            cue.onComplete?.invoke(false)
         }
         return null
     }
-    fun clear() = pending.clear()
+    fun clear() {
+        val removed = pending.toList()
+        pending.clear()
+        removed.forEach { it.onComplete?.invoke(false) }
+    }
 }

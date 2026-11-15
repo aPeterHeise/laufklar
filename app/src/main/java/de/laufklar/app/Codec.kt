@@ -10,6 +10,7 @@ object Codec {
         put("health", p.healthExport); put("route", p.shareRoute); put("maps", p.onlineMaps); put("ready", p.intensityReady)
         put("autoHealth", p.healthExport); put("autoPause", p.autoPause)
         put("distanceExperienceKm",p.distanceExperienceKm)
+        put("calibratedThreshold",p.calibratedThreshold); put("easyPaceOverride",p.easyPaceOverride)
         put("goalKm", p.goalKm); put("goalPace", p.goalPace); put("frequency", p.runsPerWeek); put("pace", p.usualPace ?: JSONObject.NULL); put("address", p.sensorAddress); put("sensor", p.sensorName)
     }
     fun profile(j: JSONObject) = Profile(
@@ -19,6 +20,7 @@ object Codec {
         // The old health flag was opt-in. Automatic export now defaults on, including existing profiles.
         audio=j.optBoolean("audio",true), cueMeters=j.optInt("cue",500).coerceIn(100,2000), healthExport=j.optBoolean("autoHealth",true), autoPause=j.optBoolean("autoPause",true),
         shareRoute=j.optBoolean("route"), onlineMaps=j.optBoolean("maps",true), intensityReady=j.optBoolean("ready"),distanceExperienceKm=if(j.has("distanceExperienceKm"))j.getDouble("distanceExperienceKm")else null,
+        calibratedThreshold=j.optBoolean("calibratedThreshold"), easyPaceOverride=j.integer("easyPaceOverride"),
         goalKm=j.optDouble("goalKm",10.0), goalPace=j.optInt("goalPace",300), runsPerWeek=j.optInt("frequency",3), usualPace=if(j.has("pace")&&j.isNull("pace"))null else j.optInt("pace",345), sensorAddress=j.optString("address").takeIf{it.isNotBlank()}, sensorName=j.optString("sensor").takeIf{it.isNotBlank()}
     )
     fun run(r: Run) = JSONObject().apply {
@@ -32,10 +34,15 @@ object Codec {
         put("rpe",r.rpe); put("note",r.note); put("export",r.exportStatus); put("revision",r.revision); put("exportedRevision",r.exportedRevision); put("recovered",r.recovered)
         put("openEnded",r.openEnded);put("plannedSeconds",r.plannedSeconds);put("coachMission",r.coachMission);put("coachOutcome",r.coachOutcome);put("referenceRunId",r.referenceRunId)
         put("coachEvents",JSONArray(r.coachEvents.map{JSONArray(listOf(it.elapsed,it.kind.name,it.text))}))
+        put("sessionPlan",r.sessionPlan?.let(CoachingCodec::session))
+        put("missionAttempts",JSONArray(r.missionAttempts.map(CoachingCodec::attempt)))
+        put("summary",r.summary?.let(CoachingCodec::summary))
+        put("missionFeedback",r.missionFeedback?.name)
+        put("unusualConditions",r.unusualConditions)
         r.cooldown?.let { c -> put("cooldown",JSONObject().apply {
             put("start",c.started);put("end",c.ended);put("startBpm",c.startBpm);put("rest",c.restingHr);put("state",c.state.name)
             put("pulses",JSONArray(c.pulses.map { JSONArray(listOf(it.time,it.bpm)) }))
-            put("endBpm",c.endBpm);put("dropBpm",c.dropBpm);put("score",c.score);put("restingRangeSeconds",c.restingRangeSeconds)
+            put("recovery",c.recovery.name);put("endBpm",c.endBpm);put("dropBpm",c.dropBpm);put("score",c.score);put("restingRangeSeconds",c.restingRangeSeconds)
         }) }
     }
     private fun <T> array(j:JSONObject,key:String, map:(JSONArray)->T):List<T> = j.optJSONArray(key)?.let{a->List(a.length()){map(a.getJSONArray(it))}} ?: emptyList()
@@ -49,10 +56,16 @@ object Codec {
         openEnded=j.optBoolean("openEnded"),plannedSeconds=if(j.has("plannedSeconds"))j.getInt("plannedSeconds")else null,
         coachMission=j.optString("coachMission"),coachOutcome=j.optString("coachOutcome"),referenceRunId=j.optString("referenceRunId").takeIf{it.isNotBlank()},
         coachEvents=array(j,"coachEvents"){CoachEvent(it.getDouble(0),CueKind.valueOf(it.getString(1)),it.getString(2))},
+        sessionPlan=j.optJSONObject("sessionPlan")?.let(CoachingCodec::session),
+        missionAttempts=j.items("missionAttempts"){a,i->CoachingCodec.attempt(a.getJSONObject(i))},
+        summary=j.optJSONObject("summary")?.let(CoachingCodec::summary),
+        missionFeedback=j.optString("missionFeedback").takeIf { it.isNotEmpty() }?.let(MissionFeedback::valueOf),
+        unusualConditions=j.optBoolean("unusualConditions"),
         cooldown=j.optJSONObject("cooldown")?.let { c -> Cooldown(
             started=c.getLong("start"),startBpm=c.getInt("startBpm"),restingHr=if(c.has("rest"))c.getInt("rest")else null,
             ended=if(c.has("end"))c.getLong("end")else null,state=CooldownState.valueOf(c.getString("state")),
-            pulses=array(c,"pulses"){CooldownPulse(it.getLong(0),it.getInt(1))}
+            pulses=array(c,"pulses"){CooldownPulse(it.getLong(0),it.getInt(1))},
+            recovery=RecoveryMethod.valueOf(c.optString("recovery","UNKNOWN"))
         ) }
     )
 }

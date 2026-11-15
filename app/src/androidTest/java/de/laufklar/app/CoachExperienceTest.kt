@@ -58,6 +58,10 @@ class CoachExperienceTest {
             assertTrue(saved.pulses.none{it.time>saved.ended!!})
             assertTrue(saved.cooldown.pulses.size>=50)
             assertEquals(saved,Codec.run(Codec.run(saved)))
+            assertEquals(40,saved.summary?.cooldownDrop)
+            assertEquals(SummarySpeech.AVAILABLE,saved.summary?.speech)
+            assertTrue(saved.summary!!.audio.contains("40 Schläge"))
+            compose.onNodeWithText("Zusammenfassung anhören").performScrollTo().assertIsDisplayed()
         }finally{
             if(Live.cooldownSeconds.value!=null){command(RunService.STOP_COOLDOWN);compose.waitUntil(10_000){Live.run.value==null}}
             if(Live.run.value!=null){command(RunService.DISCARD);compose.waitUntil(10_000){Live.run.value==null}}

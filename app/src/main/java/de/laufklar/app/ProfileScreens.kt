@@ -82,6 +82,8 @@ import kotlin.math.*
     var reserve by remember(profile){mutableStateOf(profile.reserveZones)};var custom by remember(profile){mutableStateOf(profile.customBounds?.joinToString(", ")?:"")}
     var audio by remember(profile){mutableStateOf(profile.audio)};var cue by remember(profile){mutableIntStateOf(profile.cueMeters)};var maps by remember(profile){mutableStateOf(profile.onlineMaps)}
     var health by remember(profile){mutableStateOf(profile.healthExport)};var route by remember(profile){mutableStateOf(profile.shareRoute)};var ready by remember(profile){mutableStateOf(profile.intensityReady)}
+    var calibrated by remember(profile){mutableStateOf(profile.calibratedThreshold)}
+    var openingPace by remember(profile){mutableStateOf(profile.easyPaceOverride?.let{Metrics.pace(it.toDouble())}.orEmpty())}
     var autoPause by remember(profile){mutableStateOf(profile.autoPause)}
     var experienceKm by remember(profile){mutableStateOf(profile.distanceExperienceKm?.toString()?:"")}
     var goalKm by remember(profile){mutableStateOf(profile.goalKm.toString())};var goalMinutes by remember(profile){mutableStateOf((profile.goalKm*profile.goalPace/60).toString())};var frequency by remember(profile){mutableIntStateOf(profile.runsPerWeek)};var pace by remember(profile){mutableStateOf(profile.usualPace?.let{Metrics.pace(it.toDouble())}?:"")};var paceKnown by remember(profile){mutableStateOf(profile.usualPace!=null)};var error by remember{mutableStateOf<String?>(null)}
@@ -97,7 +99,9 @@ import kotlin.math.*
         if(paceKnown&&p==null){error="Pace bitte als Minuten:Sekunden eingeben, z. B. 5:30 (zwischen 3:00 und 20:00), oder „Weiß ich noch nicht“ wählen.";return null}
         val bounds=if(custom.isBlank())null else custom.split(',',';').map{it.trim().toIntOrNull()}
         if(goal==null||!goal.isFinite()||goal<=0||minutes==null||!minutes.isFinite()||minutes<=0||a==null||w==null||(maximum.isNotBlank()&&max==null)||(resting.isNotBlank()&&rest==null)||(bounds!=null&&bounds.any{it==null})){error="Bitte gültige Zahlen eingeben. Zonengrenzen mit Komma trennen.";return null}
-        val draft=profile.copy(age=a,weight=w,sex=sex,measuredMax=max,restingHr=rest,reserveZones=reserve,customBounds=bounds?.filterNotNull(),audio=audio,cueMeters=cue,onlineMaps=maps,healthExport=health,shareRoute=route,intensityReady=ready,goalKm=goal,goalPace=(minutes*60/goal).roundToInt(),runsPerWeek=frequency,usualPace=p,autoPause=autoPause,distanceExperienceKm=experience)
+        val easyPace=openingPace.takeIf { it.isNotBlank() }?.let(Metrics::parsePace)
+        if(openingPace.isNotBlank() && easyPace==null){ error="Ruhige Trainingspace bitte als Minuten:Sekunden eingeben.";return null }
+        val draft=profile.copy(calibratedThreshold=calibrated&&bounds!=null,easyPaceOverride=easyPace,age=a,weight=w,sex=sex,measuredMax=max,restingHr=rest,reserveZones=reserve,customBounds=bounds?.filterNotNull(),audio=audio,cueMeters=cue,onlineMaps=maps,healthExport=health,shareRoute=route,intensityReady=ready,goalKm=goal,goalPace=(minutes*60/goal).roundToInt(),runsPerWeek=frequency,usualPace=p,autoPause=autoPause,distanceExperienceKm=experience)
         error=draft.validate();return draft.takeIf{error==null}
     }
     Page{
@@ -136,10 +140,12 @@ import kotlin.math.*
             Text("Dein gemessener Ruhepuls dient auch als Bezug für den persönlichen Cooldown-Score nach dem Lauf.",color=Muted,fontSize=12.sp)
             Toggle("Herzfrequenzreserve verwenden","Nur mit gemessenem Ruhepuls. Andere Grenzen als %HFmax.",reserve,{reserve=it})
             Field("6 persönliche Zonengrenzen · optional",custom,{custom=it},false)
+            if(custom.isNotBlank()) Toggle("Grenzen anhand persönlicher Schwelle bestimmt","Nur wählen, wenn die eingegebenen Grenzen auf einer individuellen Schwellenbestimmung beruhen.",calibrated,{calibrated=it})
             Text("Format: untere Grenze Z1, Beginn Z2, Z3, Z4, Z5, obere Grenze Z5. Beispiel: 90, 110, 130, 150, 165, 185. Manuelle Grenzen haben Vorrang. Gemessene Werte bitte aus dem Befund übernehmen; keinen Maximaltest auf eigene Faust.",color=Muted,fontSize=12.sp,lineHeight=19.sp)
         }
         CardBlock{
             Eyebrow("Audio-Coach")
+            Field("Vorgabe für ruhige Trainingspace · optional",openingPace,{openingPace=it})
             Toggle("Outdoor-Läufe automatisch pausieren","Bei etwa 2 Sekunden Stillstand pausieren, nach 1 Sekunde Bewegung fortsetzen. Mit Ansage bei aktiviertem Audio. Manuelle Pausen bleiben bestehen.",autoPause,{autoPause=it})
             Toggle("Ansagen während des Laufs","Pace, Gesamtstrecke, Puls und nächster Trainingsschritt",audio,{audio=it})
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){listOf(250,500,1000).forEach{m->FilterChip(selected=cue==m,onClick={cue=m},label={Text("$m m")})}}

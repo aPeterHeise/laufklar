@@ -72,7 +72,18 @@ class Repository(context:Context) {
                     if(loaded.none{it.id==r.id}){vault.write("run-${r.id}",Codec.run(r));loaded.add(r)}
                     vault.delete("active")
                 }
-                runs.value=loaded.sortedByDescending{it.started}
+                runs.value=loaded.map { run ->
+                    if (run.ended == null || run.summary != null || run.sessionPlan == null) return@map run
+                    val interrupted = run.copy(missionAttempts = run.missionAttempts.map { attempt ->
+                        if (attempt.state.terminal) attempt else attempt.copy(
+                            state = if (attempt.startedAt == null) MissionState.ABORTED else MissionState.PARTIAL,
+                            endedAt = run.activeSeconds, endedMeters = run.meters,
+                            result = "Die Aufzeichnung endete vor der vollständigen Auswertung.")
+                    })
+                    val finished = interrupted.copy(summary = SummaryBuilder.build(interrupted, loaded))
+                    vault.write("run-${run.id}",Codec.run(finished))
+                    finished
+                }.sortedByDescending{it.started}
             }catch(e:Exception){error.value="Lokaler Speicher konnte nicht geöffnet werden. Bitte App-Daten nicht löschen."}
             ready.value=true
         }
@@ -83,6 +94,15 @@ class Repository(context:Context) {
         vault.write("run-${run.id}",Codec.run(run));if(finish)vault.delete("active")
         runs.value=(runs.value.filterNot{it.id==run.id}+run).sortedByDescending{it.started}
     }}
+    suspend fun markSummaryPlayed(runId: String, summaryId: String) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val current = runs.value.find { it.id == runId } ?: return@withLock
+            val summary = current.summary?.takeIf { it.id == summaryId } ?: return@withLock
+            val updated = current.copy(summary = summary.copy(speech = SummarySpeech.PLAYED))
+            vault.write("run-$runId", Codec.run(updated))
+            runs.value = runs.value.map { if (it.id == runId) updated else it }
+        }
+    }
     suspend fun delete(run:Run)=withContext(Dispatchers.IO){mutex.withLock{vault.delete("run-${run.id}");runs.value=runs.value.filterNot{it.id==run.id}}}
     suspend fun exportResult(id:String,revision:Long,status:String,success:Boolean)=withContext(Dispatchers.IO){mutex.withLock{
         val current=runs.value.find{it.id==id}?:return@withLock

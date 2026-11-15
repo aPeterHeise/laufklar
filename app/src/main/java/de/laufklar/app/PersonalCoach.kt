@@ -21,7 +21,9 @@ class EffortMonitor {
     var settlingUntil = 0.0; private set
     val active get() = target != null
 
-    fun update(run: Run, profile: Profile, now: Long, intense: Boolean): EffortCue? {
+    fun update(run: Run, profile: Profile, now: Long, intense: Boolean,
+               limitOverride: Int? = null, estimatedTarget: Boolean = profile.estimated,
+               allowDrift: Boolean = true): EffortCue? {
         if (lastWall?.let { now - it > 10_000 } == true) { aboveSince = null; belowSince = null }
         lastWall = now
         val hr = Metrics.freshHr(run.pulses, now)
@@ -30,8 +32,8 @@ class EffortMonitor {
         val older = run.pulses.filter { it.elapsed in seconds - 180..seconds - 90 && now - it.time in 90_000..200_000 }.map { it.bpm }
         val currentPace = Metrics.recentPace(run.motion, seconds)
         val oldPace = Metrics.recentPace(run.motion.filter { it.elapsed <= seconds - 90 }, seconds - 90)
-        val drift = !intense && seconds >= 480 && older.size >= 30 && hr - older.average() >= 12 && currentPace != null && oldPace != null && currentPace >= oldPace - 10
-        val limit = if (intense || profile.estimated) profile.bounds[4] else profile.bounds[2]
+        val drift = allowDrift && !intense && seconds >= 480 && older.size >= 30 && hr - older.average() >= 12 && currentPace != null && oldPace != null && currentPace >= oldPace - 10
+        val limit = limitOverride ?: if (intense || profile.estimated) profile.bounds[4] else profile.bounds[2]
         val above = hr >= limit || drift
         if (above) { if (aboveSince == null) aboveSince = seconds } else aboveSince = null
         val goal = target
@@ -48,11 +50,11 @@ class EffortMonitor {
         if (!sustained || !due || (active && reminders >= 2 && !risingAgain)) return null
         // After two reminders, only a clear new rise or a new episode merits another interruption.
         if (active && explanationCount >= 2 && !risingAgain && seconds - lastWarning < 240) return null
-        val responseTarget = if (!profile.estimated && !drift) limit - 4 else hr - 8
+        val responseTarget = if (!estimatedTarget && !drift) limit - 4 else hr - 8
         if (target == null) target = responseTarget
         lastWarning = seconds; lastWarnedHr = hr; reminders++; settlingUntil = seconds + 180
         val text = when (explanationCount++) {
-            0 -> if (profile.estimated)
+            0 -> if (estimatedTarget)
                 "${if(drift)"Dein Puls steigt bei gleichem oder ruhigerem Tempo."else "Dein Puls bleibt hoch: $hr."} Nimm Tempo heraus, zunächst Richtung ${target} Schläge. Das ist ein vorläufiges Entlastungsziel; deine persönlichen Grenzen sind noch geschätzt."
                 else "Puls $hr. Für diesen Abschnitt liegt dein Ziel unter $limit. Nimm Tempo heraus, bis du etwa ${target} erreichst."
             1 -> "Puls $hr. Noch etwas Tempo herausnehmen, Richtung ${target} Schläge. Ich melde mich, wenn der Puls wieder gesunken ist."

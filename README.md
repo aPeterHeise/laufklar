@@ -4,7 +4,7 @@ Native Android-App für Outdoor-Läufe und Laufband, mit direktem Bluetooth-Live
 
 ## Installieren
 
-Die installierbare APK und ihre SHA-256-Prüfsumme findest du im [GitHub-Release v0.1.6](https://github.com/aPeterHeise/laufklar/releases/tag/v0.1.6). Die lokale persönliche Vorschau liegt unter `dist/laufklar-preview.apk`. Auf das Android-Telefon übertragen, dort öffnen und die Installation aus der verwendeten Datei-App erlauben. Android 14 oder neuer wird benötigt. Die APK ist für persönliches Sideloading signiert, keine Play-Store-Veröffentlichung. Bei Updates über die bestehende App installieren, nicht vorher deinstallieren: Deinstallation entfernt den lokalen Verlauf.
+Die installierbare APK und ihre SHA-256-Prüfsumme findest du im [GitHub-Release v0.1.7](https://github.com/aPeterHeise/laufklar/releases/tag/v0.1.7). Die lokale persönliche Vorschau liegt unter `dist/laufklar-preview.apk`. Auf das Android-Telefon übertragen, dort öffnen und die Installation aus der verwendeten Datei-App erlauben. Android 14 oder neuer wird benötigt. Die APK ist für persönliches Sideloading signiert, keine Play-Store-Veröffentlichung. Bei Updates über die bestehende App installieren, nicht vorher deinstallieren: Deinstallation entfernt den lokalen Verlauf.
 
 1. In **Google Health → Verbindungen → Fitbit Air → Herzfrequenz teilen → Starten** die Übertragung aktivieren.
 2. In Laufklar **Pulssensor verbinden**, Bluetooth-Freigaben erteilen, das Air auswählen und gegebenenfalls die Android-Pairingabfrage bestätigen. Warten, bis Live-Puls erscheint.
@@ -32,15 +32,15 @@ Quelle: [Thuany et al. (2021), Running Pace Percentile Values for Brazilian Non-
 
 ## Persönlicher Audio-Coach
 
-**Meine Runde** begleitet deine gewohnte Strecke ohne festes Zeitende: fünf Minuten ankommen, dann ein gleichmäßiger Kilometer als kleine Aufgabe. Der Coach passt die Aufgabe bei steigender Belastung an, erklärt wichtige Eingriffe und bestätigt eine wirksame Entlastung. Die 500-Meter-Ansagen (einstellbar) bleiben erhalten; wiederholte allgemeine Bremssätze entfallen. Höchstens zwei kurze positive Aufgaben-/Vergleichsmeldungen würdigen belegbare kleine Erfolge.
+**Meine Runde** begleitet deine gewohnte Strecke mit dem Auftrag „Ruhige Ausdauer“. Nach dem Aufwärmen wählt der Coach eine passende Aufgabe. Auf einer erkannten Runde kann eine kurze Abschlussmission hinzukommen. Du hörst Zwischenstände und das konkrete Ergebnis. Missionspunkte und Abzeichen honorieren die Durchführung. Die vier schnelleren Aufgaben sind Teil einer vor dem Start gewählten Tempoeinheit mit ausreichender Aufwärm- und Erholungszeit.
 
-Vergleiche entstehen automatisch auf passenden Abschnitten bekannter Wege, mit gleicher Richtung und ausreichenden Messdaten. Der bisherige separate Vergleichsmodus ist aus der Startauswahl entfernt; alte Läufe bleiben erhalten. Etwa 500 Meter vor dem Ende einer erkannten früheren Strecke gibt es eine Orientierung, ohne automatischen Sprint oder Laufabschluss. **Länger laufen** bietet einen Umfangsvorschlag für eine verlängerte Runde. Im Profil lässt sich hinterlegen, welche Distanz schon am Stück gelaufen wurde; daraus wird keine Zielzeit erfunden.
+Die 500-Meter-Ansagen bleiben einstellbar. Der Coach erklärt den Puls anhand des heutigen Ziels und prüft eine empfohlene Temporeduktion erneut. Nach der Erholungsmessung folgt eine gespeicherte und erneut abspielbare Zusammenfassung mit Distanz, Zeit, Aufgaben und dem letzten passenden Streckenvergleich. **Länger laufen** nennt weiterhin einen unverbindlichen Umfang. Das Ende bestimmst du.
 
-Die erste umgesetzte Variante und eine mögliche zweite Variante mit stärker geführten Aufgaben stehen in [COACHING.md](COACHING.md).
+Die Aufgaben, Vergleichsregeln und Abnahmeszenarien stehen im [Coaching-Plan](docs/COACHING_V2_PLAN.md).
 
 ## Der Trainer im Alltag
 
-Die bisherige Pace wird im Profil als **Minuten:Sekunden pro Kilometer** eingegeben, etwa `5:30`. Mit **Weiß ich noch nicht** bleibt sie offen. Dann sammelt der Trainer zunächst drei lockere Läufe mit gültiger Strecke/Pace und Belastungsgefühl von höchstens 4/10, bevor ein Ausgangstempo für Tempoeinheiten verwendet wird. Zielpace und bisherige Pace sind getrennte Angaben. Alter und Geschlecht bestimmen die Studien-Vergleichsgruppe; ein geänderter Zielvorschlag wird ausdrücklich übernommen. Gewicht wird nicht zu einem unbelegten Puls- oder Pace-Faktor verrechnet.
+Die Startseite zeigt, wie viele von drei verwendbaren Referenzläufen vorliegen und welche Angaben fehlen. Ein Referenzlauf braucht einen ruhigen, zusammenhängenden Abschnitt nach dem Aufwärmen, ausreichend Pulsdaten und eine Belastungsangabe. Aus drei passenden Läufen entsteht ein beobachtetes Tempo und bei ausreichend ähnlichen Pulswerten ein vorläufiges Pulsband. Deine bisherige Pace und die Zielpace bleiben getrennte Profilangaben. Eine ausdrücklich gesetzte ruhige Trainingspace hat für den Einstieg Vorrang.
 
 Es gibt keinen 12-Wochen-Abschluss und keine automatische Zielverschärfung. Empfehlungen werden aus lokal aufgezeichneten Läufen neu berechnet:
 
@@ -52,7 +52,7 @@ Es gibt keinen 12-Wochen-Abschluss und keine automatische Zielverschärfung. Emp
 
 Vor dem Lauf kann die Tagesform angegeben werden. „Gesundheitlich angeschlagen“ steht unten auf der Startseite und empfiehlt Erholung, lässt eine Aufzeichnung aber zu. Leistungsvergleiche berücksichtigen nur gleiche Tagesform; angeschlagene oder müde Läufe verändern kein aus erholten Läufen gelerntes Ausgangstempo. Jeder Lauf zählt weiterhin zur Trainingsbelastung. Intensivere Einheiten sind erst nach der im Profil bestätigten Klärung der ärztlichen Rückfrage, mehreren Läufen und ausreichendem Abstand wählbar. Maximal eine Tempoeinheit innerhalb von sieben Tagen. Ein Ziel wird nur mit der **gesamten verstrichenen Zeit einschließlich Pausen** als erreicht erkannt; Outdoor und Laufband werden getrennt betrachtet.
 
-Eine vollständig absolvierte, gut verträgliche Tempoeinheit mit brauchbaren Puls- und Tempodaten kann den nächsten Vorschlag leicht steigern. Zuerst 5 Sekunden/km schneller bis zum Zieltempo; anschließend gegebenenfalls ein zusätzlicher Abschnitt, später etwas längere Abschnitte. Pro Schritt wird eine Größe verändert. Ohne Belastungsangabe oder verlässliche Messdaten gibt es keine automatische Temposteigerung. Dies ist ein nachvollziehbarer lokaler Regelalgorithmus, kein klinisch validierter oder cloudbasierter KI-Trainer.
+Erfolgreiche, gut verträgliche Tempoaufgaben können später einen kleinen nächsten Schritt ermöglichen. Dafür wertet der Coach die Aufgabe, die Belastungsangabe und den Abstand zur letzten Tempoeinheit aus. Ohne Belastungsangabe oder verlässliche Messdaten gibt es keine automatische Temposteigerung. Dies ist ein nachvollziehbarer lokaler Regelalgorithmus, kein klinisch validierter oder cloudbasierter KI-Trainer.
 
 ## Aufzeichnung und Coaching
 

@@ -1,4 +1,17 @@
-# Aktueller Prüfstand: 0.1.6
+# Aktueller Prüfstand: 0.1.7
+
+15. November 2026 · Paket `de.laufklar.app` · Versionscode 8.
+
+- 108 JVM-Tests bestanden. Neue Replays prüfen feste Missionsgrenzen, Korrektur während Hälfte zwei, das 30-s/km-Gegenbeispiel, Start nach dem Aufwärmen, drei geeignete Referenzläufe, langsam steigenden Puls, Tempoabbruch bei Sensorausfall, faire Vergleiche, Cooldown-Protokoll und gespeicherte Altdaten.
+- Android 36 im isolierten Emulator. 18 von 19 Tests liefen im finalen Build direkt durch, einschließlich vollständiger 60-Sekunden-Messung mit Activity-Neuerstellung, gespeicherter Summary, Auto-Pause und Health Connect. Der Zielauswahl-Test bestand bei der separaten Wiederholung mit einem definierten Startprofil und Prüfung der Vorschau. Die erste Gerätesuite hatte außerdem einen zu früh sichtbaren Abschlussstatus bei ausgeschaltetem Audio aufgedeckt. Die korrigierte Health-Connect-Übergabe ist im finalen Lauf grün.
+- `testDebugUnitTest`, `lintDebug`, `assembleDebug`, `assembleDebugAndroidTest` und `assembleRelease` erfolgreich. Android-Lint: 0 Fehler, 4 Warnungen. Vier Tests des manuellen Release-Werkzeugs bestanden.
+- Signatur gegen die APK v0.1.6 geprüft. SHA-256 der Release-APK: `f289ab0fdb13767e303fa853ab3df57ac790e8d69b4d642d565306b82d29767a`.
+
+Noch im echten Lauf zu prüfen: Sprachübergänge mit AirPods und Musik, GPS-Vergleiche auf der Stammrunde, Eignung der Missionsauswahl sowie Verständlichkeit und Dauer der gesprochenen Zusammenfassung. Die Dauer-, Puls- und Pace-Toleranzen des Plans sind Produktparameter. Für einen Leistungsvergleich auf dem Laufband fehlt ein bestätigtes gemeinsames Steigungs- und Streckenprotokoll; die Zusammenfassung zeigt dort die Laufdaten.
+
+---
+
+# Früherer Prüfstand: 0.1.6
 
 13. November 2026 · Paket `de.laufklar.app` · Versionscode 7.
 

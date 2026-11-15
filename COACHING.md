@@ -1,5 +1,7 @@
 # Zwei Coaching-Szenarien
 
+Aktueller Folgeauftrag vom 15. November 2026: [Audio-Coach mit Missionen – Feedback, Research und Implementierungsplan](docs/COACHING_V2_PLAN.md). Version 0.1.7 verwendet den neuen Coach. Die folgenden Abschnitte dokumentieren das frühere Verhalten und die ursprüngliche Idee.
+
 ## Szenario 1: Deine Runde – umgesetzt in 0.1.5
 
 Die normale Runde bleibt zeitlich offen. Der Coach kündigt am Start an, was heute passiert: fünf Minuten ankommen, dann einen Kilometer möglichst gleichmäßig laufen. Der Nutzer beendet den Lauf selbst. „Länger laufen“ nennt einen unverbindlichen Umfang, ohne die Aufzeichnung oder die Begleitung danach abzubrechen. Das bestehende Layout bleibt erhalten.
@@ -25,7 +27,7 @@ Die Reststrecke wird entlang des gespeicherten Weges berechnet, nicht als Luftli
 
 Wer die Zieldistanz bereits am Stück laufen kann, kann das im Profil hinterlegen. Die App kann dann das Zeitziel als nächste Aufgabe erklären. Ein kurzer Trainingslauf liefert noch keine belastbare 10-km-Prognose. Gemessene Zielerreichung setzt weiterhin die tatsächliche Distanz und gesamte verstrichene Zeit voraus. Persönliche Läufe und GPS-Koordinaten werden nicht mit dem Quellcode oder Release veröffentlicht.
 
-## Szenario 2: Missionen unterwegs – Konzept, nicht implementiert
+## Szenario 2: Missionen unterwegs – ursprüngliche Konzeptskizze
 
 Vor dem Start bietet der Coach einen verständlichen Auftrag an, beispielsweise einen kontrollierten Wechsel zwischen zügigen und ruhigen Abschnitten auf der bekannten Runde. Aufgaben können während des Laufs angepasst werden: einen Abschnitt verlängern, eine Erholung einschieben oder die Tempoaufgabe beenden. Der Coach erklärt dabei jeweils den Grund und den nächsten Schritt. Der Nutzer bekommt eine verständliche Ergebnisgeschichte nach dem Lauf.
 

@@ -96,13 +96,13 @@ class MainActivity:ComponentActivity(){
     fun healthConnect(){if(HealthExporter(context).available()) healthPermissions.launch(HealthExporter.basePermissions + if(repo.profile.value.shareRoute)setOf(HealthExporter.routePermission)else emptySet()) else notice="Health Connect ist auf diesem Gerät nicht verfügbar."}
     LaunchedEffect(active?.id,runs.size){if(active!=null)previousActive=active!!.id else if(previousActive!=null){detailId=previousActive;previousActive=null}}
     fun connectSensor(){request(arrayOf(Manifest.permission.BLUETOOTH_SCAN,Manifest.permission.BLUETOOTH_CONNECT)){sensorDialog=true;Live.sensorOwnership.reconnect();Live.sensor.scan()}}
-    fun start(mode:RunMode,workout:Workout,readiness:Readiness){
+    fun start(mode:RunMode,workout:Workout,readiness:Readiness,minutes:Int=0,openPath:Boolean=false){
         if(storageError!=null){notice=storageError;return}
-        if(workout==Workout.INTERVALS&&runs.any{it.workout==Workout.INTERVALS&&it.started>System.currentTimeMillis()-7*24*3600_000L}){notice="In den letzten 7 Tagen gab es eine Tempoeinheit. Wähle heute einen lockeren Lauf.";return}
+        if(workout==Workout.INTERVALS&&runs.any{it.hasTempoWork()&&it.started>System.currentTimeMillis()-7*24*3600_000L}){notice="In den letzten 7 Tagen gab es eine Tempoeinheit. Wähle heute einen lockeren Lauf.";return}
         val perms=buildList{add(Manifest.permission.POST_NOTIFICATIONS);if(mode==RunMode.OUTDOOR){add(Manifest.permission.ACCESS_FINE_LOCATION);add(Manifest.permission.ACCESS_COARSE_LOCATION)};if(profile.sensorAddress!=null){add(Manifest.permission.BLUETOOTH_CONNECT);add(Manifest.permission.BLUETOOTH_SCAN)}}.toTypedArray()
         request(perms){
             if(mode==RunMode.OUTDOOR&&context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED)notice="Für Outdoor-Aufzeichnung bitte präzisen Standort erlauben. Laufband ist ohne GPS möglich."
-            else runCatching{context.startForegroundService(Intent(context,RunService::class.java).setAction(RunService.START).putExtra("mode",mode.name).putExtra("workout",workout.name).putExtra("readiness",readiness.name))}.onFailure{notice="Lauf konnte nicht starten: ${it.message}"}
+            else runCatching{context.startForegroundService(Intent(context,RunService::class.java).setAction(RunService.START).putExtra("mode",mode.name).putExtra("workout",workout.name).putExtra("readiness",readiness.name).putExtra(RunService.CONFIRMED_MINUTES,minutes).putExtra(RunService.OPEN_PATH,openPath))}.onFailure{notice="Lauf konnte nicht starten: ${it.message}"}
         }
     }
     Scaffold(containerColor=Ink,bottomBar={if(active==null&&detailId==null&&!privacy)NavigationBar(containerColor=Ink,tonalElevation=0.dp){
@@ -114,7 +114,7 @@ class MainActivity:ComponentActivity(){
                 privacy->PrivacyScreen{privacy=false}
                 active!=null->ActiveScreen(active!!,profile,onConnect=::connectSensor)
                 detailId!=null->{val r=runs.find{it.id==detailId};if(r==null)LaunchedEffect(detailId){detailId=null}else DetailScreen(r,profile,onBack={detailId=null},onNotice={notice=it})}
-                tab==0->Home(profile,runs,onStart=::start,onConnect=::connectSensor,onProfile={tab=3})
+                tab==0->Home(profile,runs,onStart={m,w,r->start(m,w,r)},onConnect=::connectSensor,onProfile={tab=3},onTempoStart=::start)
                 tab==1->History(runs){detailId=it.id}
                 tab==2->ProgressScreen(runs,profile)
                 else->ProfileScreen(profile,onSave={p->scope.launch{runCatching{repo.setProfile(p)}.onSuccess{notice="Profil gespeichert"}.onFailure{notice="Profil konnte nicht gespeichert werden"}}},onConnect=::connectSensor,onHealth=::healthConnect,onPrivacy={privacy=true})
@@ -138,11 +138,22 @@ class MainActivity:ComponentActivity(){
 fun localDate(time:Long)=Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()).toLocalDate()
 fun dateText(time:Long)=Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("EEE, d. MMM · HH:mm",Locale.GERMANY))
 fun weekRuns(runs:List<Run>,offset:Int=0):List<Run>{val end=LocalDate.now().minusDays(offset*7L).plusDays(1);val start=end.minusDays(7);return runs.filter{val d=localDate(it.started);!d.isBefore(start)&&d.isBefore(end)}}
-@Composable fun Home(profile:Profile,runs:List<Run>,onStart:(RunMode,Workout,Readiness)->Unit,onConnect:()->Unit,onProfile:()->Unit){
+@Composable fun Home(profile:Profile,runs:List<Run>,onStart:(RunMode,Workout,Readiness)->Unit,onConnect:()->Unit,onProfile:()->Unit,onTempoStart:((RunMode,Workout,Readiness,Int,Boolean)->Unit)?=null){
     var mode by rememberSaveable{mutableStateOf(RunMode.OUTDOOR)};var workout by rememberSaveable{mutableStateOf(Workout.EASY)}
     var readiness by rememberSaveable{mutableStateOf(Readiness.READY)}
     val recent=weekRuns(runs)
     val plan=remember(profile,runs,mode,readiness){AdaptiveTrainer.plan(profile,runs,mode,readiness)}
+    val learning=remember(profile,runs,mode){LearningEvaluator.evaluate(runs,mode,System.currentTimeMillis())}
+    val target=remember(profile,learning){LearningEvaluator.target(profile,learning)}
+    var confirmTempo by rememberSaveable { mutableStateOf(false) }
+    var confirmedMinutes by rememberSaveable { mutableStateOf("30") }
+    var openPath by rememberSaveable { mutableStateOf(false) }
+    val startMinutes=confirmedMinutes.toIntOrNull()?.takeIf { it in 21..120 }
+    val preview=remember(profile,runs,mode,readiness,workout,startMinutes,openPath) {
+        MissionPlanner.create(profile,runs,mode,readiness,workout,startMinutes.takeIf { workout==Workout.INTERVALS },openPath,System.currentTimeMillis())
+    }
+    val badges=remember(runs){SummaryBuilder.badges(runs)}
+    val points=remember(runs){runs.sumOf { run -> run.missionAttempts.count { it.state==MissionState.SUCCEEDED } }}
     LaunchedEffect(plan){workout=plan.suggested}
     Column(Modifier.fillMaxSize()){
     Box(Modifier.weight(1f)){Page{
@@ -156,19 +167,29 @@ fun weekRuns(runs:List<Run>,offset:Int=0):List<Run>{val end=LocalDate.now().minu
             Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){RunMode.entries.forEach{m->FilterChip(selected=mode==m,onClick={mode=m},label={Text(m.label)},leadingIcon={Icon(if(m==RunMode.OUTDOOR)Icons.Outlined.Park else Icons.Outlined.FitnessCenter,null,Modifier.size(17.dp))})}}
             CardBlock{
                 Eyebrow("Dein Trainer · ${plan.focus.label}",Lime)
-                Text(plan.reason,color=Muted,fontSize=13.sp,lineHeight=20.sp)
+                Text(learning.description(),color=Muted,fontSize=13.sp,lineHeight=20.sp)
+                learning.latest?.let { Text("Letzte Referenz: ${dateText(it)}",fontSize=12.sp,color=Muted) }
+                target?.let { Text("${it.low}–${it.high} bpm · ${it.source.label}",fontSize=12.sp,color=Muted) }
+                if(points>0) Text("$points Missionspunkte · Rhythmus, Belastung steuern und Tempo aufbauen",fontSize=12.sp,color=Lime)
+                badges.forEach { Text(it,color=Lime,fontSize=12.sp) }
+                if(plan.restRecommended || readiness!=Readiness.READY) Text(plan.reason,color=Muted,fontSize=13.sp,lineHeight=20.sp)
                 Text("Wie fühlst du dich heute?",fontWeight=FontWeight.SemiBold)
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Readiness.entries.take(2).forEach{r->FilterChip(selected=readiness==r,onClick={readiness=r},label={Text(r.label,fontSize=12.sp)})}}
             }
             Eyebrow(if(plan.restRecommended)"Heute ist Erholung empfohlen"else "Heute laufen")
             Text("Dein Coach begleitet die Runde mit einer kleinen Aufgabe und passenden Vergleichen. Du entscheidest, wann du fertig bist.",color=Muted,fontSize=13.sp,lineHeight=20.sp)
-            plan.available().forEach{w->
+            plan.available().filter { it != Workout.INTERVALS || learning.observedPace != null }.forEach{w->
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(if(workout==w)Lime.copy(alpha=.10f)else Panel).clickable{workout=w}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){
                     RadioButton(selected=workout==w,onClick={workout=w});Spacer(Modifier.width(8.dp));Column(Modifier.weight(1f)){if(w==plan.suggested&&!plan.restRecommended)Text("Heute empfohlen",color=Lime,fontSize=10.sp);Text(w.label,fontWeight=FontWeight.SemiBold);Text(workoutSubtitle(w,plan),color=Muted,fontSize=12.sp)}
                     Text(plan.durationLabel(w),color=if(workout==w)Lime else Muted,fontSize=20.sp)
                 }
             }
-            CardBlock{Text("So läuft „${workout.label}“",fontWeight=FontWeight.SemiBold,color=Lime);Text(workoutExplanation(workout,plan),color=Muted,fontSize=13.sp,lineHeight=21.sp)}
+            CardBlock {
+                Text(preview.title,fontWeight=FontWeight.SemiBold,color=Lime)
+                Text("${preview.warmup/60} Minuten ankommen, dann ${preview.missions.first().title.lowercase()}.",color=Muted,fontSize=13.sp)
+                if(workout==Workout.LONG) Text(workoutExplanation(workout,plan),color=Muted,fontSize=13.sp)
+                if(workout!=Workout.INTERVALS && preview.missions.size>1) Text("Wenn Zeit bleibt: mit Reserve ins Ziel.",color=Muted,fontSize=12.sp)
+            }
         }
         SensorCard(onConnect)
         if(mode==RunMode.TREADMILL)CardBlock{Text("Dein Laufband gibt das Tempo vor",fontWeight=FontWeight.SemiBold);Text("Während des Laufs km/h eingeben. Ohne Eingabe laufen Zeit und Puls weiter; Pace und Distanz bleiben offen. Die Enddistanz kannst du nachtragen.",color=Muted,fontSize=13.sp)}
@@ -179,13 +200,30 @@ fun weekRuns(runs:List<Run>,offset:Int=0):List<Run>{val end=LocalDate.now().minu
     }}
     Column(Modifier.fillMaxWidth().background(Ink).padding(horizontal=24.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
         Text("${workout.label} · ${plan.durationLabel(workout)}",fontSize=12.sp,color=Muted,modifier=Modifier.align(Alignment.CenterHorizontally))
-        FullButton("${mode.label} starten",Icons.Outlined.PlayArrow){onStart(mode,workout,readiness)}
+        FullButton("${mode.label} starten",Icons.Outlined.PlayArrow){
+            if(workout==Workout.INTERVALS && onTempoStart!=null) confirmTempo=true else onStart(mode,workout,readiness)
+        }
     }
     }
+    if(confirmTempo) AlertDialog(
+        onDismissRequest={confirmTempo=false},
+        title={Text("Tempoeinheit planen")},
+        text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
+            Field("Geplante Minuten · 21–120",confirmedMinutes,{confirmedMinutes=it})
+            if(mode==RunMode.OUTDOOR) Toggle("Freier, übersichtlicher Abschnitt", "Damit sind kurze Steigerungen wählbar.", openPath, {openPath=it})
+            Text(if(preview.intense) "${preview.missions.first().title} nach dem Aufwärmen. Danach mindestens fünf Minuten ruhig."
+                else "Für eine Tempoaufgabe fehlen Zeit oder geeignete Referenzdaten.")
+        }},
+        confirmButton={TextButton(enabled=preview.intense && startMinutes!=null,onClick={
+            confirmTempo=false
+            onTempoStart?.invoke(mode,workout,readiness,startMinutes!!,mode==RunMode.OUTDOOR&&openPath)
+        }){Text("Tempoeinheit starten")}},
+        dismissButton={TextButton(onClick={confirmTempo=false}){Text("Zurück")}}
+    )
 }
 fun workoutSubtitle(w:Workout,p:DailyPlan)=when(w){Workout.EASY->"Deine Strecke · kleine Aufgabe · automatische Vergleiche";Workout.BASELINE->"Vergleichslauf · wird dieselbe Pace leichter?";Workout.LONG->"Runde verlängern · Dauer als Orientierung";Workout.INTERVALS->"Schnelle und lockere Abschnitte im Wechsel"}
 fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
-    Workout.EASY->"Fünf Minuten ankommen, dann einen Kilometer möglichst gleichmäßig laufen. Deine Runde bleibt offen. Der Coach erkennt passende Streckenabschnitte wieder, erklärt wichtige Anpassungen und meldet echte kleine Erfolge. Bei steigender Belastung wird die Aufgabe ruhiger."
+    Workout.EASY->"Locker ankommen, eine passende Aufgabe und ein ruhiger Abschluss."
     Workout.BASELINE->"10 Minuten aufwärmen, 20 Minuten gleichmäßig locker laufen, 5 Minuten auslaufen. Wähle eine flache Strecke oder dasselbe Laufband mit gleicher Steigung. Alle 2–4 Wochen wiederholen: Unter „Entwicklung“ siehst du, ob du bei ähnlichem Puls schneller wirst. Laufe dabei so, dass du ganze Sätze sprechen kannst."
     Workout.LONG->"Etwa ${p.longMinutes} Minuten als Vorschlag, passend zu deinen bisherigen Läufen. Plane dafür eine Erweiterung deiner Runde. Du entscheidest über das Ende; Zeit und Strecke laufen weiter, auch wenn der Vorschlag erreicht ist. Heute zählt Umfang, nicht Tempo."
     Workout.INTERVALS->"10 Minuten aufwärmen, dann ${p.repetitions} zügige Abschnitte à ${Metrics.duration(p.workSeconds.toDouble())} Minuten mit jeweils 2 Minuten lockerer Erholung; am Ende 10 Minuten auslaufen. Orientierung: ${Metrics.pace(p.targetPace.toDouble())} min/km. Puls und Belastungsgefühl gehen vor Tempo. Der Coach sagt jeden Wechsel an."
@@ -245,7 +283,7 @@ fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
             if(phase!=null&&phase.duration>0)LinearProgressIndicator(progress={((run.activeSeconds-previous)/phase.duration).toFloat().coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth(),color=Lime,trackColor=Ink)
             Text(message,fontSize=18.sp,lineHeight=26.sp)
             if(hr==null)Text("Kein frischer, stabiler Puls · keine Aufforderung zur Temposteigerung",color=Peach,fontSize=12.sp)
-            else Text("Zone ${profile.zone(hr)} · ${if(profile.estimated)"geschätzte Grenzen"else "deine Grenzen"}",color=Muted,fontSize=12.sp)
+            else Text("Zone ${profile.zone(hr)} · ${run.sessionPlan?.source?.label ?: if(profile.estimated)"geschätzte Grenzen"else "deine Grenzen"}",color=Muted,fontSize=12.sp)
         }
         if(run.mode==RunMode.TREADMILL){
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){
@@ -259,6 +297,25 @@ fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
             if(run.points.isNotEmpty()){
                 RouteMap(run.points,profile.onlineMaps,Modifier.fillMaxWidth().height(210.dp).clip(RoundedCornerShape(20.dp)),followPosition=true,pulses=run.pulses,zoneBounds=run.zoneBounds)
                 RouteZoneLegend()
+            }
+        }
+        run.sessionPlan?.let { session ->
+            val attempt = run.missionAttempts.lastOrNull()
+            CardBlock {
+                Eyebrow(session.title,Lime)
+                Text(attempt?.id?.title ?: session.missions.first().title,fontWeight=FontWeight.SemiBold)
+                Text(attempt?.state?.label ?: if(run.activeSeconds<session.warmup) "Locker ankommen" else "Warte auf einen durchgehenden Abschnitt",color=Muted,fontSize=13.sp)
+                if (attempt?.state == MissionState.ACTIVE) {
+                    val distanceBased = attempt.id == MissionId.M01 || attempt.id == MissionId.M05
+                    val done = if (distanceBased) run.meters - (attempt.startedMeters ?: run.meters)
+                        else run.activeSeconds - (attempt.startedAt ?: run.activeSeconds)
+                    val total = if (distanceBased) if (attempt.id == MissionId.M01) 1000 else 600
+                        else if (attempt.id.intense) attempt.id.phases(session.extraRepetitions).sumOf { it.seconds } else attempt.id.seconds
+                    LinearProgressIndicator(progress={ (done/total).toFloat().coerceIn(0f,1f) },modifier=Modifier.fillMaxWidth())
+                }
+                session.pulseTarget?.let { Text("${it.low}–${it.high} bpm · ${it.source.label}",color=Muted,fontSize=12.sp) }
+                if(!paused && (attempt == null || !attempt.state.terminal))
+                    TextButton(onClick={command(RunService.SKIP_MISSION)}){Text("Aufgabe überspringen")}
             }
         }
         if(autoPaused)TextButton(onClick={command(RunService.PAUSE)}){Text("Pausiert bleiben · manuelle Pause")}
@@ -326,7 +383,15 @@ fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
             if(saving){CircularProgressIndicator(color=Lime);Text("Lauf wird abgeschlossen …",color=Muted)}
             else {Text(message,color=Peach);FullButton("Speichern erneut versuchen"){context.startService(Intent(context,RunService::class.java).setAction(RunService.FINISH))}}
         }
-        run.cooldown?.let{CooldownResult(it)}
+        run.cooldown?.let{ cooldown ->
+            CooldownResult(cooldown)
+            if(remaining!=null) Text("Wie erholst du dich gerade?",fontSize=12.sp,color=Muted)
+            if(remaining!=null) Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                listOf(RecoveryMethod.WALKING_SELF_REPORTED,RecoveryMethod.STANDING_SELF_REPORTED).forEach { method ->
+                    FilterChip(selected=cooldown.recovery==method,onClick={RunService.instance?.recoveryMethod(method)},label={Text(method.label)})
+                }
+            }
+        }
     }
 }
 @Composable fun CooldownResult(cooldown:Cooldown){
@@ -372,6 +437,11 @@ fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
     val context=LocalContext.current;val scope=rememberCoroutineScope();val repo=context.repo()
     var edit by remember{mutableStateOf(false)};var remove by remember{mutableStateOf(false)};var busy by remember{mutableStateOf(false)}
     var km by remember(run.id){mutableStateOf(if(run.distance>0)"%.2f".format(Locale.GERMANY,run.distance/1000)else "")}
+    var unusual by remember(run.id){ mutableStateOf(run.unusualConditions) }
+    var difficulty by remember(run.id){ mutableStateOf(run.missionFeedback) }
+    var confirmedStrides by remember(run.id) {
+        mutableStateOf(run.missionAttempts.any { it.id==MissionId.M08 && it.state==MissionState.SUCCEEDED })
+    }
     var rpe by remember(run.id){mutableStateOf(run.rpe?.toString()?:"")};var note by remember(run.id){mutableStateOf(run.note)};var error by remember{mutableStateOf<String?>(null)}
     val export=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")){uri->if(uri!=null)scope.launch{runCatching{withContext(Dispatchers.IO){context.contentResolver.openOutputStream(uri)?.use{it.write(Codec.run(run).toString(2).toByteArray())}?:error("Datei nicht geöffnet")}}.onSuccess{onNotice("JSON-Datei exportiert. Diese Datei enthält unverschlüsselte Laufdaten.")}.onFailure{onNotice("Export fehlgeschlagen")}}}
     val gpx=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/gpx+xml")){uri->if(uri!=null)scope.launch{runCatching{withContext(Dispatchers.IO){context.contentResolver.openOutputStream(uri)?.use{it.write(gpx(run).toByteArray())}?:error("Datei nicht geöffnet")}}.onSuccess{onNotice("GPS-Track exportiert")}.onFailure{onNotice("GPX-Export fehlgeschlagen")}}}
@@ -410,6 +480,7 @@ fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
                 Text("${Metrics.duration(it.elapsed)} · ${it.text}",color=Muted,fontSize=12.sp)
             }
         }
+        run.summary?.let { summary -> RunSummaryCard(run, summary, profile.audio) }
         CardBlock{Eyebrow("Wie hat es sich angefühlt?");Text(run.rpe?.let{"Belastung $it / 10"}?:"Noch keine Einschätzung");if(run.note.isNotBlank())Text(run.note,color=Muted);OutlinedButton(onClick={edit=true},modifier=Modifier.fillMaxWidth()){Text(if(run.mode==RunMode.TREADMILL)"Distanz & Belastung ergänzen"else "Belastung & Notiz ergänzen")}}
         CardBlock{
             Eyebrow("Health Connect");Text(run.exportStatus,color=Muted,fontSize=13.sp)
@@ -422,12 +493,33 @@ fun workoutExplanation(w:Workout,p:DailyPlan)=when(w){
     }
     if(edit)AlertDialog(onDismissRequest={edit=false},title={Text("Lauf ergänzen")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
         if(run.mode==RunMode.TREADMILL)Field("Enddistanz am Laufband · km",km,{km=it})
-        Field("Belastung 1–10 (optional)",rpe,{rpe=it});Field("Notiz: Wetter, Steigung, Tagesform …",note,{note=it},false);error?.let{Text(it,color=Peach)}
+        Field("Belastung 1–10 (optional)",rpe,{rpe=it})
+        if(run.missionAttempts.any { it.startedAt != null }) {
+            Text("Wie war die Aufgabe?",color=Muted,fontSize=13.sp)
+            Row(horizontalArrangement=Arrangement.spacedBy(5.dp)) {
+                MissionFeedback.entries.forEach { value ->
+                    FilterChip(selected=difficulty==value,onClick={difficulty=if(difficulty==value)null else value},label={Text(value.label,fontSize=11.sp)})
+                }
+            }
+        }
+        if(run.missionAttempts.any { it.id==MissionId.M08 && it.measuredFraction==1.0 &&
+                    it.state in listOf(MissionState.PARTIAL,MissionState.SUCCEEDED) }) {
+            Toggle("Steigerungen ausgeführt","Bestätigt deine Ausführung zusätzlich zu den Bewegungsdaten.",confirmedStrides,{confirmedStrides=it})
+        }
+        Toggle("Ungewöhnliche Bedingungen","Zum Beispiel starke Wärme, Wind oder ungewohntes Gelände.",unusual,{unusual=it})
+        Field("Notiz: Wetter, Steigung, Tagesform …",note,{note=it},false);error?.let{Text(it,color=Peach)}
     }},confirmButton={TextButton(onClick={
         val distance=km.replace(',','.').toDoubleOrNull();val effort=rpe.toIntOrNull()
         when{run.mode==RunMode.TREADMILL&&(distance==null||!distance.isFinite()||distance !in .01..200.0)->error="Bitte 0,01 bis 200 km eingeben."
             rpe.isNotBlank()&&(effort==null||effort !in 1..10)->error="Belastung zwischen 1 und 10 eingeben."
-            else->scope.launch{val updated=run.copy(correctedMeters=if(run.mode==RunMode.TREADMILL)distance!!*1000 else null,rpe=effort,note=note.take(2000),revision=run.revision+1);repo.save(updated);edit=false;if(profile.healthExport)onNotice(HealthExporter(context).export(updated))}
+            else->scope.launch{val updated=run.copy(correctedMeters=if(run.mode==RunMode.TREADMILL)distance!!*1000 else null,rpe=effort,note=note.take(2000),revision=run.revision+1,
+                unusualConditions=unusual,missionFeedback=difficulty,
+                missionAttempts=run.missionAttempts.map { attempt ->
+                    if (attempt.id!=MissionId.M08 || attempt.measuredFraction!=1.0) attempt
+                    else if (confirmedStrides) attempt.copy(state=MissionState.SUCCEEDED,result="Vier Steigerungen mit Bewegungsdaten und bestätigter Ausführung.")
+                    else attempt.copy(state=MissionState.PARTIAL,result="Vier Steigerungen begleitet. Die Ausführung ist offen.")
+                });val refreshed=if(updated.summary!=null) updated.copy(summary=SummaryBuilder.build(updated,repo.runs.value).copy(speech=updated.summary.speech)) else updated
+                repo.save(refreshed);edit=false;if(profile.healthExport)onNotice(HealthExporter(context).export(refreshed))}
         }
     }){Text("Speichern")}},dismissButton={TextButton(onClick={edit=false}){Text("Abbrechen")}})
     if(remove)AlertDialog(onDismissRequest={remove=false},title={Text("Lauf lokal löschen?")},text={Text("Die lokale Aufzeichnung wird entfernt. Bereits in Health Connect geteilte Daten und exportierte Dateien bleiben dort erhalten; du kannst sie in Health Connect beziehungsweise im Dateimanager löschen.")},confirmButton={TextButton(onClick={scope.launch{repo.delete(run);remove=false;onBack()}}){Text("Lokal löschen",color=Peach)}},dismissButton={TextButton(onClick={remove=false}){Text("Behalten")}})
@@ -443,6 +535,71 @@ fun gpx(run:Run):String=buildString{
         val path=Path();var previous:Pulse?=null
         run.pulses.forEach{p->val x=(p.elapsed/run.activeSeconds.coerceAtLeast(1.0)*size.width).toFloat();val y=size.height*(1-(p.bpm-minHr).toFloat()/(maxHr-minHr));if(previous==null||p.time-previous!!.time>10_000)path.moveTo(x,y)else path.lineTo(x,y);previous=p}
         drawPath(path,Peach,style=Stroke(width=2.dp.toPx()))
+        fun mark(seconds: Double, color: Color) {
+            val x=(seconds/run.activeSeconds.coerceAtLeast(1.0)*size.width).toFloat().coerceIn(0f,size.width)
+            drawLine(color,Offset(x,0f),Offset(x,size.height),strokeWidth=1.dp.toPx())
+        }
+        run.sessionPlan?.let { mark(it.warmup.toDouble(),Muted.copy(alpha=.6f)) }
+        run.missionAttempts.forEach { attempt ->
+            attempt.startedAt?.let { mark(it,Lime.copy(alpha=.6f)) }
+            attempt.endedAt?.let { mark(it,Lime.copy(alpha=.6f)) }
+        }
+        run.pauses.forEach { pause -> run.pulses.lastOrNull { it.time<=pause.from }?.let { mark(it.elapsed,Muted) } }
     }
-    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("$minHr–$maxHr bpm",color=Muted,fontSize=11.sp);Text("${Metrics.duration(run.activeSeconds)} min",color=Muted,fontSize=11.sp)}
+    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("Skala $minHr–$maxHr bpm",color=Muted,fontSize=11.sp);Text("${Metrics.duration(run.activeSeconds)} min",color=Muted,fontSize=11.sp)}
+    if(run.sessionPlan!=null) Text("Graue Marken: Aufwärmende und Pausen · grüne Marken: Aufgaben · Cooldown separat",color=Muted,fontSize=11.sp)
+}
+
+
+@Composable
+private fun RunSummaryCard(run: Run, summary: RunSummary, audioEnabled: Boolean) {
+    val context = LocalContext.current
+    val speech = remember { AudioCoach(context) }
+    DisposableEffect(speech) { onDispose { speech.close() } }
+    LaunchedEffect(audioEnabled) {
+        if (!audioEnabled) {
+            speech.stop()
+            RunService.instance?.stopSummaryAudio()
+        }
+    }
+    val runs by context.repo().runs.collectAsStateWithLifecycle()
+    val reference = summary.comparison?.let { result -> runs.any { it.id == result.referenceId } } == true
+    CardBlock {
+        Eyebrow("Dein Lauf im Rückblick",Lime)
+        Text("${Metrics.km(summary.distance)} km · ${Metrics.duration(summary.activeSeconds)} aktiv · ${Metrics.duration(summary.totalSeconds)} gesamt")
+        Text("Ø ${Metrics.pace(run.pace)} min/km",color=Muted,fontSize=13.sp)
+        run.missionAttempts.filter { it.state.terminal }.forEach { attempt ->
+            Text("${attempt.id.title} · ${attempt.state.label}",color=if(attempt.state==MissionState.SUCCEEDED)Lime else Cream)
+            Text(attempt.result,color=Muted,fontSize=13.sp)
+        }
+        summary.comparison?.let { comparison ->
+            Text("Vergleich vom ${dateText(comparison.referenceDate)}",fontWeight=FontWeight.SemiBold)
+            Text(comparison.text(),color=Muted,fontSize=13.sp)
+            Text("Pace ${Metrics.pace(comparison.previousPace)} → ${Metrics.pace(comparison.pace)} min/km · Puls ${comparison.previousHr.roundToInt()} → ${comparison.hr.roundToInt()} bpm",fontSize=13.sp)
+            Text("Vorherige Runde: ${Metrics.km(comparison.referenceDistance)} km · ${Metrics.duration(comparison.referenceActiveSeconds)} aktiv · ${Metrics.duration(comparison.referenceTotalSeconds)} gesamt" +
+                if(comparison.sameFullRoute) " · gleiche Runde" else " · Vergleich nur auf den passenden Abschnitten",
+                color=Muted,fontSize=12.sp)
+            if(!reference) Text("Gespeicherter Vergleich. Der Referenzlauf ist nicht mehr im Verlauf.",color=Muted,fontSize=12.sp)
+            else if(runs.any { it.id==comparison.referenceId && it.revision!=comparison.referenceRevision }) Text("Historischer Vergleich. Die Referenz wurde seither bearbeitet.",color=Muted,fontSize=12.sp)
+            else if(summary.favorableRuns>=2) Text("Wiederholt günstige Werte gegenüber drei passenden Läufen.",color=Lime,fontSize=12.sp)
+        } ?: Text(summary.comparisonReason,color=Muted,fontSize=13.sp)
+        if(summary.lastRound != null && summary.lastRound.id != summary.comparison?.referenceId) {
+            val last = summary.lastRound
+            Text("Letzter Lauf vom ${dateText(last.date)} · ${Metrics.km(last.distance)} km · ${Metrics.duration(last.active)} aktiv · ${Metrics.duration(last.total)} gesamt",
+                fontSize=12.sp,color=Muted)
+        }
+        summary.cooldownDrop?.let { drop ->
+            Text("Pulsänderung nach 60 Sekunden: ${if(drop>0) "−$drop" else "+${-drop}"} bpm · ${summary.recovery.label}",color=Muted,fontSize=13.sp)
+        }
+        summary.cooldownComparison?.let { prior ->
+            Text("Pulsabfall bei gleicher Erholungsart zuletzt ${prior.dropBpm} bpm am ${dateText(prior.date)}.",fontSize=12.sp,color=Muted)
+        }
+        Text(summary.next)
+        if(summary.speech==SummarySpeech.ATTEMPTED && RunService.instance!=null) TextButton(onClick={RunService.instance?.stopSummaryAudio()}){Text("Ansage stoppen")}
+        OutlinedButton(onClick={
+            RunService.instance?.stopSummaryAudio()
+            speech.stop()
+            speech.speak(summary.audio)
+        }){Text("Zusammenfassung anhören")}
+    }
 }
